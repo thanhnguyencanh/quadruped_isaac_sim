@@ -1,0 +1,33 @@
+# ROS 2 / colcon (build dirs normally live at the workspace root, one level up)
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Large sim/data artifacts — keep these out of git
+*.usd
+*.usdc
+*.usdz
+*.bag
+*.db3
+maps/*.pgm
+maps/*.yaml
+replicator_out/
+assets/
+
+# Isaac Sim logs / caches
+*.log
+
+# excluded from the public repo
+docs/
