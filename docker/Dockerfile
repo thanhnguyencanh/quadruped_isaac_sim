@@ -94,8 +94,12 @@ RUN mkdir -p ${UNIGE_WS}/src && \
 
 WORKDIR ${UNIGE_WS}
 
-# Fail the build early if the planner stack did not resolve.
-RUN source "${SAR_PLANNING_VENV}/bin/activate" && \
+# Fail the build early if the planner stack did not resolve. ROS must be sourced FIRST so
+# rclpy is on PYTHONPATH (it lives in /opt/ros, not system site-packages); the venv was made
+# with --system-site-packages so it inherits that PYTHONPATH. This mirrors runtime usage:
+# `source /opt/ros/jazzy/setup.bash && source /opt/sar_planning_venv/bin/activate`.
+RUN source /opt/ros/jazzy/setup.bash && \
+    source "${SAR_PLANNING_VENV}/bin/activate" && \
     python -c "import unified_planning, rclpy; print('planning venv OK: unified_planning + rclpy import')" && \
     deactivate
 
