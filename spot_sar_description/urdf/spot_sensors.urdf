@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  spot_sar_description — Spot sensor frames for the SAR stack.
+
+  Defines the robot's static frame tree that hangs off base_link (Spot's body):
+      base_link -> camera_link -> camera_optical_frame
+  matching the camera mount in spot_sar_sim/.../spot_perception_app.py. Published by
+  robot_state_publisher (see launch/description.launch.py) onto /tf_static — a single,
+  canonical source for these frames, replacing the inline static_transform_publisher nodes
+  in spot_sar_bringup/perception.launch.py.
+
+  NOTE: odom -> base_link is provided by the Isaac ROS 2 bridge (Phase 1); map -> odom by
+  slam_toolbox (Phase 3). This file owns only the body -> sensor legs.
+
+  Geometry: camera mounted 0.35 m forward, 0.10 m up on the body. camera_optical_frame is the
+  REP-103 optical convention (z-forward, x-right, y-down): rpy = (-pi/2, 0, -pi/2).
+-->
+<robot name="spot_sar">
+
+  <!-- Spot body / base frame (root here; odom->base_link comes from the sim bridge) -->
+  <link name="base_link"/>
+
+  <!-- body-aligned camera mount frame (x-forward, y-left, z-up) -->
+  <link name="camera_link"/>
+  <joint name="base_to_camera_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.35 0.0 0.10" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ROS optical frame: image pixels + camera_info intrinsics are expressed here -->
+  <link name="camera_optical_frame"/>
+  <joint name="camera_link_to_optical" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz="0.0 0.0 0.0" rpy="-1.5707963267948966 0 -1.5707963267948966"/>
+  </joint>
+
+</robot>
