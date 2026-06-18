@@ -181,9 +181,11 @@ class VictimDetector(Node):
         ps.header.stamp = stamp
         ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
         try:
+            # use the latest available transform (Time()) — looking up at the exact image
+            # stamp can extrapolate into the future under sim time and drop the detection.
             tf = self.tf_buffer.lookup_transform(
-                self.target_frame, self.optical_frame, stamp,
-                timeout=rclpy.duration.Duration(seconds=0.1),
+                self.target_frame, self.optical_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.2),
             )
             out = tf2_geometry_msgs.do_transform_point(ps, tf)
             return (out.point.x, out.point.y, out.point.z)
