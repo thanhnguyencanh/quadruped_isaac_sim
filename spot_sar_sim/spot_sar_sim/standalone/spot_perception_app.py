@@ -113,6 +113,16 @@ VICTIM_PRIM = "/World/Victim"
 VICTIM_POS = (2.5, 0.0, 0.3)
 VICTIM_COLOR = (1.0, 0.35, 0.0)
 
+# a simple walled room so the depth->scan->slam_toolbox pipeline has structure to map
+# (the bare grid environment has no walls). Each entry: (name, center, scale[x,y,z]).
+WALL_COLOR = (0.6, 0.6, 0.6)
+WALLS = [
+    ("wall_n", (4.0, 0.0, 1.0), (0.2, 8.0, 2.0)),
+    ("wall_s", (-4.0, 0.0, 1.0), (0.2, 8.0, 2.0)),
+    ("wall_e", (0.0, -4.0, 1.0), (8.0, 0.2, 2.0)),
+    ("wall_w", (0.0, 4.0, 1.0), (8.0, 0.2, 2.0)),
+]
+
 PHYSICS_HZ = 200.0
 
 
@@ -164,6 +174,16 @@ _shd.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
 _mat.CreateSurfaceOutput().ConnectToSource(_shd.ConnectableAPI(), "surface")
 UsdShade.MaterialBindingAPI(victim_prim).Apply(victim_prim)
 UsdShade.MaterialBindingAPI(victim_prim).Bind(_mat)
+
+# ---- walled room (geometry for the depth->scan->SLAM pipeline) ----
+for _name, _pos, _scale in WALLS:
+    _wp = define_prim(f"/World/{_name}", "Cube")
+    UsdGeom.Cube(_wp).GetSizeAttr().Set(1.0)
+    _wx = UsdGeom.Xformable(_wp)
+    _wx.ClearXformOpOrder()
+    _wx.AddTranslateOp().Set(Gf.Vec3d(*_pos))
+    _wx.AddScaleOp().Set(Gf.Vec3f(*_scale))
+    UsdGeom.Gprim(_wp).GetDisplayColorAttr().Set([Gf.Vec3f(*WALL_COLOR)])
 
 # ---- forward-facing RGB-D camera, child of the body so it tracks the chassis ----
 cam_prim = define_prim(CAMERA_PRIM, "Camera")

@@ -3,14 +3,18 @@
 <package format="3">
   <name>spot_sar_nav</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="alex@dsc-labs.io">Alex</maintainer>
+  <description>SLAM (slam_toolbox) + Nav2 + frontier exploration config for Spot SAR.</description>
+  <maintainer email="canhthanhlt@gmail.com">thanhnguyencanh</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>depthimage_to_laserscan</exec_depend>
+  <exec_depend>navigation2</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

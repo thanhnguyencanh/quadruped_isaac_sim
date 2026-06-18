@@ -31,8 +31,10 @@ supervisor Prof. Antonio Sgorbissa. Simulation-first, 3 months, remote-capable.
 | **Phase 0** — workspace + env | ✅ Done (commit `5a8c2d3`). 8 packages build; Spot loads its flat-terrain policy and **walks ~2.76 m** headless (physics-only smoke test). |
 | **Phase 1** — Spot + ROS 2 bridge | ✅ Working. `spot_cmd_vel_app.py`: Spot **walks ~11 m on a ROS 2 `/cmd_vel`** Twist and stands stably at zero command; the bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf` (all visible to system ROS 2 Jazzy on `ROS_DOMAIN_ID=42`). Verified end-to-end via `ros2 launch spot_sar_bringup sim.launch.py`. |
 | **Phase 2** — RGB-D perception | ✅ Camera bridge working. `spot_perception_app.py` adds a body-mounted RGB-D camera; the bridge publishes `/camera/rgb/image_raw` (~25 Hz), `/camera/depth/image_raw`, `/camera/rgb/camera_info` (640×480, `camera_optical_frame`) + the `base_link→camera_link→camera_optical_frame` TF. `detector_node` (HSV + depth back-projection) publishes `spot_sar_msgs/VictimArray` on `/victims`. One launch: `ros2 launch spot_sar_bringup perception.launch.py`. |
+| **Phase 3** — SLAM + world model | 🟡 Partial. Depth→`/scan` (`depthimage_to_laserscan`, **~48 Hz**, `camera_link` frame) ✅ and the `world_model_node` (symbol grounding → `spot_sar_msgs/WorldModel` on `/world_model`) ✅ verified; a walled room was added so the scene has structure to map. `slam_toolbox` launches but **does not yet publish `/map`** — likely a `/scan` QoS mismatch (best-effort pub vs reliable sub) and/or memory pressure (slam_toolbox is OOM-killed when the full stack runs; survives with `run_detector:=false`). Next: QoS reconcile + fresh-boot run. `ros2 launch spot_sar_bringup mapping.launch.py`. |
 | Planning env | ✅ `~/sar_planning_venv` solves with Fast Downward / ENHSP; `rclpy` + `unified_planning` coexist. |
-| Phases 3–6 | ⬜ Not started (SLAM/Nav2, world model, PDDL domain, executive). |
+| **Phase 5** — PDDL planning | ✅ Domain + problem generation verified. `spot_sar_planning/pddl/domain.pddl` (move/explore/detect/report) solves via Fast Downward; `planner.problem_pddl_from_worldmodel()` turns a `WorldModel` into a problem that also solves (move→…→explore→detect→report). |
+| Phases 4, 6 | ⬜ Not started (Nav2 frontier exploration; sense-plan-act-replan executive). |
 
 ## Layout
 

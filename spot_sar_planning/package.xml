@@ -3,11 +3,16 @@
 <package format="3">
   <name>spot_sar_planning</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="alex@dsc-labs.io">Alex</maintainer>
+  <description>Symbol grounding (world model) + PDDL domain/problem + unified-planning glue.</description>
+  <maintainer email="canhthanhlt@gmail.com">thanhnguyencanh</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
+  <depend>spot_sar_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
