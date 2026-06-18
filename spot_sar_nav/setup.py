@@ -29,6 +29,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'frontier_explorer = spot_sar_nav.frontier_explorer:main',
         ],
     },
 )

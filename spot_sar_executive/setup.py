@@ -13,9 +13,9 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Alex',
-    maintainer_email='alex@dsc-labs.io',
-    description='TODO: Package description',
+    maintainer='thanhnguyencanh',
+    maintainer_email='canhthanhlt@gmail.com',
+    description='Task executive: SENSE-GROUND-PLAN-ACT-MONITOR-REPLAN loop over /world_model + PDDL.',
     license='Apache-2.0',
     extras_require={
         'test': [
@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'task_executive = spot_sar_executive.executive:main',
         ],
     },
 )

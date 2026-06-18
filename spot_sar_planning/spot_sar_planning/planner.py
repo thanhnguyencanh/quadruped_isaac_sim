@@ -19,15 +19,17 @@ import os
 
 
 def default_pddl_dir() -> str:
-    """Locate the pddl/ dir, in the source tree or the installed share dir."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    for cand in (
-        os.path.join(here, "..", "pddl"),                       # source checkout
-        os.path.join(here, "..", "..", "..", "..", "share", "spot_sar_planning", "pddl"),
-    ):
+    """Locate the pddl/ dir: installed share dir (preferred) or the source tree."""
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        cand = os.path.join(get_package_share_directory("spot_sar_planning"), "pddl")
         if os.path.isdir(cand):
-            return os.path.abspath(cand)
-    return os.path.abspath(os.path.join(here, "..", "pddl"))
+            return cand
+    except Exception:  # noqa: BLE001  (ament not available / package not installed)
+        pass
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(here, "..", "pddl")            # source checkout
+    return os.path.abspath(cand)
 
 
 def solve(domain_path: str, problem_path: str):

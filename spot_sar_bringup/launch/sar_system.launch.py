@@ -1,0 +1,38 @@
+"""Full SAR autonomy infrastructure (Phases 2-4) in one launch.
+
+Composes:
+  * mapping.launch.py  -> Isaac + Spot + RGB-D camera + victim detector + depth->/scan + slam_toolbox
+  * nav2.launch.py     -> Nav2 navigation servers (controller/planner/behaviors/bt)
+
+The "brain" is started SEPARATELY because it needs the planning venv (unified_planning):
+  source /opt/ros/jazzy/setup.bash && source ~/unige_ws/install/setup.bash
+  source ~/sar_planning_venv/bin/activate
+  ros2 run spot_sar_planning world_model_node --ros-args -p use_sim_time:=true -p fixed_frame:=map
+  ros2 run spot_sar_executive task_executive   --ros-args -p use_sim_time:=true
+For pure coverage instead of the SAR mission:
+  ros2 run spot_sar_nav frontier_explorer --ros-args -p use_sim_time:=true
+
+  ros2 launch spot_sar_bringup sar_system.launch.py
+
+WARNING: this is the FULL heavy stack (Isaac+RTX render + slam_toolbox + Nav2). It needs real
+memory headroom — run it on a freshly booted machine (clear swap) or it will OOM-kill nodes.
+"""
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    mapping = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "mapping.launch.py"])
+        )
+    )
+    nav2 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare("spot_sar_nav"), "launch", "nav2.launch.py"])
+        )
+    )
+    return LaunchDescription([mapping, nav2])
