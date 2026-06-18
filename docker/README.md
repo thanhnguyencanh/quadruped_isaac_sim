@@ -21,6 +21,18 @@ your source is **not** baked in; mount the colcon workspace at run time and buil
                                    42
 ```
 
+## Prerequisite — Docker daemon access
+
+`docker` must be usable without `sudo`. If you see
+`permission denied ... /var/run/docker.sock`, add yourself to the `docker` group once:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker          # apply to the current shell (or log out/in)
+```
+
+(Or prefix each command below with `sudo`.)
+
 ## Usage
 
 ```bash
