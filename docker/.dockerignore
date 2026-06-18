@@ -1,0 +1,7 @@
+# build context is docker/ only; keep it tiny
+**/build
+**/install
+**/log
+**/__pycache__
+**/*.pyc
+**/.git

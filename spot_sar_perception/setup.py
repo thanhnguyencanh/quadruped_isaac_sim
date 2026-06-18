@@ -13,9 +13,9 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Alex',
-    maintainer_email='alex@dsc-labs.io',
-    description='TODO: Package description',
+    maintainer='thanhnguyencanh',
+    maintainer_email='canhthanhlt@gmail.com',
+    description='Victim detection + localization for Spot SAR: RGB-D -> /victims (VictimArray).',
     license='Apache-2.0',
     extras_require={
         'test': [
@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'detector_node = spot_sar_perception.detector_node:main',
         ],
     },
 )

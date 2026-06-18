@@ -29,9 +29,10 @@ supervisor Prof. Antonio Sgorbissa. Simulation-first, 3 months, remote-capable.
 | Phase | State |
 |---|---|
 | **Phase 0** — workspace + env | ✅ Done (commit `5a8c2d3`). 8 packages build; Spot loads its flat-terrain policy and **walks ~2.76 m** headless (physics-only smoke test). |
-| **Phase 1** — Spot + ROS 2 bridge | ✅ Working. `spot_cmd_vel_app.py`: Spot **walks ~11 m on a ROS 2 `/cmd_vel`** Twist and stands stably at zero command; the bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf` (all visible to system ROS 2 Jazzy on `ROS_DOMAIN_ID=42`). Follow-ups: bringup launch, odom `chassisPrim` → `/World/Spot/body`. |
+| **Phase 1** — Spot + ROS 2 bridge | ✅ Working. `spot_cmd_vel_app.py`: Spot **walks ~11 m on a ROS 2 `/cmd_vel`** Twist and stands stably at zero command; the bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf` (all visible to system ROS 2 Jazzy on `ROS_DOMAIN_ID=42`). Verified end-to-end via `ros2 launch spot_sar_bringup sim.launch.py`. |
+| **Phase 2** — RGB-D perception | ✅ Camera bridge working. `spot_perception_app.py` adds a body-mounted RGB-D camera; the bridge publishes `/camera/rgb/image_raw` (~25 Hz), `/camera/depth/image_raw`, `/camera/rgb/camera_info` (640×480, `camera_optical_frame`) + the `base_link→camera_link→camera_optical_frame` TF. `detector_node` (HSV + depth back-projection) publishes `spot_sar_msgs/VictimArray` on `/victims`. One launch: `ros2 launch spot_sar_bringup perception.launch.py`. |
 | Planning env | ✅ `~/sar_planning_venv` solves with Fast Downward / ENHSP; `rclpy` + `unified_planning` coexist. |
-| Phases 2–6 | ⬜ Not started (perception, SLAM/Nav2, PDDL domain, executive). |
+| Phases 3–6 | ⬜ Not started (SLAM/Nav2, world model, PDDL domain, executive). |
 
 ## Layout
 
@@ -56,6 +57,7 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 - `spot_smoke_test.py` — fast physics-only validation (Spot walks ~2.76 m, no rendering). The go-to health check.
 - `spot_smoke_render.py` — RTX render-path validation (slow first run; for camera-sensor work later).
 - `spot_cmd_vel_app.py` — Phase 1 app: drive Spot from ROS 2 `/cmd_vel`; bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf`.
+- `spot_perception_app.py` — Phase 2 app: superset of the Phase 1 app + a body-mounted RGB-D camera (`/camera/rgb/image_raw`, `/camera/depth/image_raw`, `/camera/rgb/camera_info`) and an orange "victim" marker. **Rendering on** (the camera needs the RTX render path), unlike the physics-only Phase 1 app.
 
 ## Installation (prerequisites)
 
@@ -119,7 +121,19 @@ ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
 # In another shell (conda deactivated, Jazzy sourced, SAME ROS_DOMAIN_ID=42):
 #   ros2 topic echo /clock --once
 #   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.6}}'
+
+# 4. Phase 2 — Spot + RGB-D camera + victim detector (headless, rendering on)
+ros2 launch spot_sar_bringup perception.launch.py
+# In another shell (SAME ROS_DOMAIN_ID=42):
+#   ros2 topic hz /camera/rgb/image_raw          # ~25 Hz
+#   ros2 topic echo /camera/rgb/camera_info --once
+#   ros2 topic echo /victims                     # spot_sar_msgs/VictimArray
+# First launch triggers a slow RTX shader compile (cold cache) before frames appear.
 ```
+
+> **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
+> [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
+> Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).
 
 ## Machine-specific footguns (handled by `scripts/run_isaac.sh` + the apps)
 
@@ -132,3 +146,10 @@ ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
 4. **8 GB VRAM** is the *minimum* tier — keep render resolution low and add sensors one at a time.
 5. **First-run RTX shader compilation is slow** (cold Blackwell cache); locomotion dev uses the
    physics-only path (`world.step(render=False)`) to skip it entirely.
+6. **Camera needs rendering ON** — `spot_perception_app.py` must run the RTX render path (a render
+   product produces no image in the physics-only mode used for locomotion). Keep one camera at
+   640×480 with the render decoupled (~25 Hz) to fit the 8 GB VRAM budget.
+7. **Isaac camera optical frame** — Isaac's USD camera looks down its local −Z, but the bridge
+   publishes pixels + intrinsics in the ROS optical convention (z-fwd, x-right, y-down). Images
+   are stamped `camera_optical_frame`; the `camera_link→camera_optical_frame` leg is a REP-103
+   static TF (launch). Validate with `ros2 run tf2_ros tf2_echo base_link camera_optical_frame`.
