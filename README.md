@@ -62,7 +62,9 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 - `spot_smoke_test.py` — fast physics-only validation (Spot walks ~2.76 m, no rendering). The go-to health check.
 - `spot_smoke_render.py` — RTX render-path validation (slow first run; for camera-sensor work later).
 - `spot_cmd_vel_app.py` — Phase 1 app: drive Spot from ROS 2 `/cmd_vel`; bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf`.
-- `spot_perception_app.py` — Phase 2 app: superset of the Phase 1 app + a body-mounted RGB-D camera (`/camera/rgb/image_raw`, `/camera/depth/image_raw`, `/camera/rgb/camera_info`) and an orange "victim" marker. **Rendering on** (the camera needs the RTX render path), unlike the physics-only Phase 1 app.
+- `spot_perception_app.py` — Phase 2 app: superset of the Phase 1 app + a body-mounted RGB-D camera (`/camera/rgb/image_raw`, `/camera/depth/image_raw`, `/camera/rgb/camera_info`). **Rendering on** (the camera needs the RTX render path), unlike the physics-only Phase 1 app.
+- `sar_scene.py` — shared SAR environment builder (walled room + multiple orange "victim" markers + a distractor, with `UsdSemantics` class labels); used by the live sim **and** the dataset generator.
+- `replicator_sar_sdg.py` — Phase 2 synthetic-data generator: NVIDIA Replicator renders randomized viewpoints → a labelled dataset (RGB + 2D bbox + semantic segmentation, classes `victim`/`distractor`) under `~/unige_ws/datasets/sar_victims/`. Trains a learned detector (YOLO) to replace the HSV first cut.
 
 ## Installation (prerequisites)
 
