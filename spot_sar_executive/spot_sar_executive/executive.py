@@ -71,6 +71,7 @@ class TaskExecutive(Node):
         self.domain = os.path.join(default_pddl_dir(), "domain.pddl")
 
         self.wm = None
+        self.found = set()         # victim ids whose `detect` succeeded (executive-tracked state)
         self.reported = set()      # victim ids already reported
         self.blocked = set()       # victim ids we gave up on (unreachable)
         self.busy = False
@@ -104,8 +105,9 @@ class TaskExecutive(Node):
             return
         vlocs = [loc_by_id[i] for i in vids]
         edges = list(zip(self.wm.connected_a, self.wm.connected_b))
+        found_here = [v for v in vids if v in self.found]
         prob = problem_pddl_from_worldmodel(self.wm.locations, edges, self.wm.robot_location,
-                                            vids, vlocs, self.wm.explored)
+                                            vids, vlocs, self.wm.explored, found_ids=found_here)
         pf = os.path.join(tempfile.gettempdir(), "sar_problem.pddl")
         with open(pf, "w") as fh:
             fh.write(prob)
@@ -171,6 +173,11 @@ class TaskExecutive(Node):
         self.get_logger().info(f"MONITOR: {action} -> success={ok} ({result.message})")
         if ok:
             self.fail_count = 0
+            if name == "detect":
+                # persist the detect effect so the planner advances to `report` (no detect loop)
+                vid = self._victim_in_action(args)
+                if vid is not None:
+                    self.found.add(vid)
             if name == "report":
                 self.reported.add(int(args[0].lstrip("vV")))
                 self.get_logger().info(f"*** victim {args[0]} REPORTED — mission progress ***")

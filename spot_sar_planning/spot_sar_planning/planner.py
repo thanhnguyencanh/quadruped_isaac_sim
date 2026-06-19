@@ -47,7 +47,7 @@ def solve(domain_path: str, problem_path: str):
 
 
 def problem_pddl_from_worldmodel(locations, edges, robot_location, victim_ids,
-                                 victim_locations, explored, problem_name="sar") -> str:
+                                 victim_locations, explored, found_ids=(), problem_name="sar") -> str:
     """Build a problem.pddl string from the grounded world model.
 
     locations          : list of symbolic location ids (e.g. "L_1_0")
@@ -56,6 +56,8 @@ def problem_pddl_from_worldmodel(locations, edges, robot_location, victim_ids,
     victim_ids         : list of int victim ids
     victim_locations   : list of location ids, parallel to victim_ids
     explored           : list of explored location ids
+    found_ids          : victim ids already detected (executive-tracked) -> (found v) in init, so
+                         the plan advances past `detect` to `report` instead of looping on detect.
     Goal: report every victim.
     """
     objs_loc = " ".join(_san(l) for l in locations) or "L_none"
@@ -70,6 +72,9 @@ def problem_pddl_from_worldmodel(locations, edges, robot_location, victim_ids,
         init.append(f"(explored {_san(l)})")
     for vid, vloc in zip(victim_ids, victim_locations):
         init.append(f"(victim-at v{vid} {_san(vloc)})")
+    for vid in found_ids:
+        if vid in victim_ids:
+            init.append(f"(found v{vid})")
     goal = " ".join(f"(reported v{vid})" for vid in victim_ids) or "(= 0 0)"
 
     obj_line = f"    {objs_loc} - location"
