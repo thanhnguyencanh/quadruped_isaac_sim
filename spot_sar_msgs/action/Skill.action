@@ -1,0 +1,10 @@
+# A dispatchable SAR skill, executed by the skill server and commanded by the Task Executive.
+# Consolidates the guide's go_to_location / explore / observe / report skills behind one
+# action so the executive can dispatch any skill and branch on success/failure for replanning.
+string skill              # "go_to_location" | "explore" | "observe" | "report"
+string target             # location id (go_to_location) or victim id (report); "" otherwise
+---
+bool success              # did the skill achieve its effect?
+string message            # human-readable result (for the executive's MONITOR/replan)
+---
+string status             # human-readable progress feedback

@@ -1,22 +1,27 @@
 """Task Executive — Phase 6: the SENSE -> GROUND -> PLAN -> ACT -> MONITOR -> REPLAN loop.
 
 Each cycle:
-  * SENSE/GROUND: read the latest symbolic WorldModel on /world_model (from world_model_node).
-  * PLAN: build a PDDL problem (planner.problem_pddl_from_worldmodel) over the UNREPORTED
-    victims and solve it with Fast Downward (planner.solve).
-  * ACT: dispatch the FIRST plan action as a skill:
-      - move / explore -> Nav2 NavigateToPose to the target location's centroid
-      - detect          -> no-op (perception runs continuously; the victim is already known)
-      - report          -> mark the victim reported (and log it)
-  * MONITOR/REPLAN: when the skill finishes, the next cycle re-reads the world model and replans
-    — so newly explored locations / newly detected victims are handled automatically.
+  * SENSE/GROUND : read the latest symbolic WorldModel on /world_model (from world_model_node).
+  * PLAN         : build a PDDL problem (planner.problem_pddl_from_worldmodel) over the UNREPORTED,
+                   non-blocked victims and solve it with Fast Downward (planner.solve).
+  * ACT          : dispatch the FIRST plan action as a /skill action (spot_sar_msgs/action/Skill):
+                       move    -> go_to_location(<dest>)   (Nav2 NavigateToPose, via skill_server)
+                       explore -> observe                  (dwell + sense the current cell)
+                       detect  -> observe
+                       report  -> report(<victim>)
+  * MONITOR      : on the skill RESULT (success/failure): a successful `report` marks the victim
+                   reported; a skill that fails repeatedly blocks that victim (unreachable) so the
+                   mission can still terminate.
+  * REPLAN       : the next cycle re-reads /world_model and re-solves — newly explored locations /
+                   newly detected victims are handled automatically (partial observability).
 
-Runs in the planning venv (needs unified_planning) with ROS + the workspace sourced:
+Runs in the planning venv (unified_planning) under a MultiThreadedExecutor (so the Skill action
+client can run concurrently with the planning timer):
   source /opt/ros/jazzy/setup.bash && source ~/unige_ws/install/setup.bash
   source ~/sar_planning_venv/bin/activate
-  ros2 run spot_sar_executive task_executive --ros-args -p use_sim_time:=true
+  python <install>/lib/spot_sar_executive/task_executive --ros-args -p use_sim_time:=true
 
-Use -p dry_run:=true to log decisions WITHOUT sending Nav2 goals (planning-loop test without Nav2).
+-p dry_run:=true logs decisions WITHOUT sending skill goals (planning-loop test without the stack).
 parse_action() is module-level for unit testing.
 """
 import os
@@ -24,12 +29,23 @@ import tempfile
 
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
-from nav2_msgs.action import NavigateToPose
+from spot_sar_msgs.action import Skill
 from spot_sar_msgs.msg import WorldModel
 
 from spot_sar_planning.planner import default_pddl_dir, problem_pddl_from_worldmodel, solve
+
+# PDDL action name -> (skill name, which arg is the target: 'loc-last' | 'victim-first' | None)
+ACTION_TO_SKILL = {
+    "move": ("go_to_location", "loc-last"),
+    "explore": ("observe", None),
+    "detect": ("observe", None),
+    "report": ("report", "victim-first"),
+}
+MAX_ACTION_FAILS = 3
 
 
 def _san(loc: str) -> str:
@@ -55,11 +71,16 @@ class TaskExecutive(Node):
         self.domain = os.path.join(default_pddl_dir(), "domain.pddl")
 
         self.wm = None
-        self.reported = set()
+        self.reported = set()      # victim ids already reported
+        self.blocked = set()       # victim ids we gave up on (unreachable)
         self.busy = False
-        self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
-        self.create_subscription(WorldModel, "/world_model", self._on_wm, 10)
-        self.create_timer(float(self.get_parameter("cycle_period").value), self._cycle)
+        self.last_action = None
+        self.fail_count = 0
+
+        self.cb = ReentrantCallbackGroup()
+        self.skill = ActionClient(self, Skill, "skill", callback_group=self.cb)
+        self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
+        self.create_timer(float(self.get_parameter("cycle_period").value), self._cycle, callback_group=self.cb)
         self.get_logger().info(f"task_executive up (dry_run={self.dry_run}); domain={self.domain}")
 
     def _on_wm(self, msg: WorldModel):
@@ -71,13 +92,14 @@ class TaskExecutive(Node):
                 return (c.x, c.y)
         return None
 
+    # ---------------- PLAN ----------------
     def _cycle(self):
         if self.busy or self.wm is None:
             return
         loc_by_id = {v.id: self.wm.victim_location[i] for i, v in enumerate(self.wm.victims)}
-        vids = [v.id for v in self.wm.victims if v.id not in self.reported]
+        vids = [v.id for v in self.wm.victims if v.id not in self.reported and v.id not in self.blocked]
         if not vids:
-            self.get_logger().info("mission: all known victims reported (or none yet).",
+            self.get_logger().info("MISSION: all known victims reported (or none yet).",
                                    throttle_duration_sec=10.0)
             return
         vlocs = [loc_by_id[i] for i in vids]
@@ -93,61 +115,94 @@ class TaskExecutive(Node):
             self.get_logger().warn(f"planner error: {e}")
             return
         if not plan:
-            self.get_logger().info("no plan (victims unreachable in current map) — keep exploring.",
+            # no plan for the remaining victims in the current (partial) map -> keep sensing.
+            self.get_logger().info("no plan (victims unreachable in current map) - keep exploring.",
                                    throttle_duration_sec=10.0)
             return
         self.get_logger().info(f"PLAN ({len(plan)} actions); next: {plan[0]}")
         self._dispatch(plan[0])
 
+    # ---------------- ACT ----------------
     def _dispatch(self, action):
         name, args = parse_action(action)
         loc_map = {_san(l).lower(): l for l in self.wm.locations}
-        if name in ("move", "explore"):
+        mapping = ACTION_TO_SKILL.get(name)
+        if mapping is None:
+            self.get_logger().warn(f"no skill mapping for action {name}")
+            return
+        skill_name, targ_kind = mapping
+        target = ""
+        if targ_kind == "loc-last":
             target = loc_map.get(args[-1], args[-1])
-            xy = self._centroid(target)
-            if xy is None:
+            if self._centroid(target) is None:
                 self.get_logger().warn(f"no centroid for {target}; skipping")
                 return
-            self._navigate(xy, label=f"{name}->{target}")
-        elif name == "detect":
-            self.get_logger().info(f"detect: {args[0]} (perception continuous) — replanning")
-        elif name == "report":
-            vid = int(args[0].lstrip("vV"))
-            self.reported.add(vid)
-            self.get_logger().info(f"*** REPORTED victim {vid} at {loc_map.get(args[-1], args[-1])} ***")
-        else:
-            self.get_logger().warn(f"unknown action {name}")
+        elif targ_kind == "victim-first":
+            target = args[0].lstrip("vV")
 
-    def _navigate(self, xy, label):
+        self.last_dispatched = (name, args)
         if self.dry_run:
-            self.get_logger().info(f"[dry_run] {label}: would NavigateToPose ({xy[0]:.2f}, {xy[1]:.2f})")
+            self.get_logger().info(f"[dry_run] would dispatch skill {skill_name}({target}) for {action}")
             return
-        if not self.nav.server_is_ready():
-            self.get_logger().warn("navigate_to_pose not ready (is Nav2 up?)", throttle_duration_sec=5.0)
+        if not self.skill.server_is_ready():
+            self.get_logger().warn("/skill server not ready (is skill_server up?)", throttle_duration_sec=5.0)
             return
-        goal = NavigateToPose.Goal()
-        goal.pose.header.frame_id = self.frame
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
-        goal.pose.pose.position.x = float(xy[0])
-        goal.pose.pose.position.y = float(xy[1])
-        goal.pose.pose.orientation.w = 1.0
+        goal = Skill.Goal()
+        goal.skill = skill_name
+        goal.target = target
         self.busy = True
-        self.get_logger().info(f"{label}: NavigateToPose ({xy[0]:.2f}, {xy[1]:.2f})")
-        self.nav.send_goal_async(goal).add_done_callback(self._on_goal_resp)
+        self.get_logger().info(f"ACT: skill {skill_name}({target})  [from {action}]")
+        self.skill.send_goal_async(goal).add_done_callback(
+            lambda fut, a=action: self._on_goal_resp(fut, a))
 
-    def _on_goal_resp(self, fut):
+    def _on_goal_resp(self, fut, action):
         gh = fut.result()
-        if not gh.accepted:
+        if gh is None or not gh.accepted:
+            self.get_logger().warn(f"skill goal rejected for {action}")
             self.busy = False
             return
-        gh.get_result_async().add_done_callback(lambda _f: setattr(self, "busy", False))
+        gh.get_result_async().add_done_callback(lambda f, a=action: self._on_result(f, a))
+
+    # ---------------- MONITOR ----------------
+    def _on_result(self, fut, action):
+        result = fut.result().result
+        name, args = parse_action(action)
+        ok = bool(result.success)
+        self.get_logger().info(f"MONITOR: {action} -> success={ok} ({result.message})")
+        if ok:
+            self.fail_count = 0
+            if name == "report":
+                self.reported.add(int(args[0].lstrip("vV")))
+                self.get_logger().info(f"*** victim {args[0]} REPORTED — mission progress ***")
+        else:
+            # same action failing repeatedly -> block its victim so the mission can terminate.
+            if self.last_action == action:
+                self.fail_count += 1
+            else:
+                self.fail_count = 1
+            self.last_action = action
+            if self.fail_count >= MAX_ACTION_FAILS:
+                vid = self._victim_in_action(args)
+                if vid is not None:
+                    self.blocked.add(vid)
+                    self.get_logger().warn(f"giving up on victim {vid} after {self.fail_count} failed '{name}'")
+                self.fail_count = 0
+        self.busy = False  # -> REPLAN next cycle
+
+    def _victim_in_action(self, args):
+        for a in args:
+            if a and a[0] in "vV" and a[1:].isdigit():
+                return int(a[1:])
+        return None
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = TaskExecutive()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
