@@ -96,12 +96,17 @@ global_costmap:
       update_frequency: 1.0
       publish_frequency: 1.0
       resolution: 0.05
+      # ROLLING, robot-centred global costmap (NOT bound to slam_toolbox's partial /map). With a
+      # static map the planner aborts "Robot is out of bounds of the costmap" whenever the robot
+      # sits just outside the small explored map. A 20x20 m rolling window keeps the robot always
+      # in-bounds; obstacles come live from /scan, and NavfnPlanner(allow_unknown) plans through
+      # the unmapped cells. The persistent map still lives in slam /map + the symbolic world model.
+      rolling_window: true
+      width: 20
+      height: 20
       track_unknown_space: true
       footprint: "[ [0.45, 0.20], [0.45, -0.20], [-0.45, -0.20], [-0.45, 0.20] ]"
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: true
+      plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
