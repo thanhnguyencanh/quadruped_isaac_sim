@@ -39,6 +39,10 @@ Verify (SYSTEM ROS 2 Jazzy shell, SAME ROS_DOMAIN_ID):
 """
 import argparse
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sar_scene import build_sar_scene  # shared SAR environment (walls + victims + semantics)
 
 from isaacsim import SimulationApp
 
@@ -89,7 +93,7 @@ from isaacsim.core.simulation_manager import SimulationManager
 from isaacsim.core.simulation_manager.impl.isaac_events import IsaacEvents
 from isaacsim.robot.policy.examples.robots import SpotFlatTerrainPolicy
 from isaacsim.storage.native import get_assets_root_path
-from pxr import Gf, Sdf, UsdGeom, UsdShade
+from pxr import Gf, UsdGeom
 
 torch = import_module("torch")
 import warp as wp
@@ -107,21 +111,6 @@ CAM_W, CAM_H = 640, 480
 RGB_TOPIC = "/camera/rgb/image_raw"
 DEPTH_TOPIC = "/camera/depth/image_raw"
 CAM_INFO_TOPIC = "/camera/rgb/camera_info"
-
-# victim marker (a saturated orange the HSV detector keys on)
-VICTIM_PRIM = "/World/Victim"
-VICTIM_POS = (2.5, 0.0, 0.3)
-VICTIM_COLOR = (1.0, 0.35, 0.0)
-
-# a simple walled room so the depth->scan->slam_toolbox pipeline has structure to map
-# (the bare grid environment has no walls). Each entry: (name, center, scale[x,y,z]).
-WALL_COLOR = (0.6, 0.6, 0.6)
-WALLS = [
-    ("wall_n", (4.0, 0.0, 1.0), (0.2, 8.0, 2.0)),
-    ("wall_s", (-4.0, 0.0, 1.0), (0.2, 8.0, 2.0)),
-    ("wall_e", (0.0, -4.0, 1.0), (8.0, 0.2, 2.0)),
-    ("wall_w", (0.0, 4.0, 1.0), (8.0, 0.2, 2.0)),
-]
 
 PHYSICS_HZ = 200.0
 
@@ -154,36 +143,9 @@ SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=[0.0, 0.0, 0.8])
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz]; mutated in place
 
-# ---- victim marker: an orange cube ~2.5 m ahead (a real target for the detector) ----
-victim_prim = define_prim(VICTIM_PRIM, "Cube")
-UsdGeom.Cube(victim_prim).GetSizeAttr().Set(0.5)
-_vx = UsdGeom.Xformable(victim_prim)
-_vx.ClearXformOpOrder()
-_vx.AddTranslateOp().Set(Gf.Vec3d(*VICTIM_POS))
-UsdGeom.Gprim(victim_prim).GetDisplayColorAttr().Set([Gf.Vec3f(*VICTIM_COLOR)])  # fallback
-# RTX ignores displayColor on an unbound prim, so bind a UsdPreviewSurface. Emissive +
-# diffuse orange makes the marker a saturated, lighting-independent target for the HSV detector.
-_stage = victim_prim.GetStage()
-_mat = UsdShade.Material.Define(_stage, VICTIM_PRIM + "/OrangeMat")
-_shd = UsdShade.Shader.Define(_stage, VICTIM_PRIM + "/OrangeMat/Shader")
-_shd.CreateIdAttr("UsdPreviewSurface")
-_shd.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*VICTIM_COLOR))
-_shd.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*VICTIM_COLOR))
-_shd.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.6)
-_shd.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
-_mat.CreateSurfaceOutput().ConnectToSource(_shd.ConnectableAPI(), "surface")
-UsdShade.MaterialBindingAPI(victim_prim).Apply(victim_prim)
-UsdShade.MaterialBindingAPI(victim_prim).Bind(_mat)
-
-# ---- walled room (geometry for the depth->scan->SLAM pipeline) ----
-for _name, _pos, _scale in WALLS:
-    _wp = define_prim(f"/World/{_name}", "Cube")
-    UsdGeom.Cube(_wp).GetSizeAttr().Set(1.0)
-    _wx = UsdGeom.Xformable(_wp)
-    _wx.ClearXformOpOrder()
-    _wx.AddTranslateOp().Set(Gf.Vec3d(*_pos))
-    _wx.AddScaleOp().Set(Gf.Vec3f(*_scale))
-    UsdGeom.Gprim(_wp).GetDisplayColorAttr().Set([Gf.Vec3f(*WALL_COLOR)])
+# ---- SAR environment: walled room + multiple orange victims (+ semantics) + a distractor ----
+_victims = build_sar_scene()
+print(f"[perception] SAR scene: {len(_victims)} victim(s) at {_victims}", flush=True)
 
 # ---- forward-facing RGB-D camera, child of the body so it tracks the chassis ----
 cam_prim = define_prim(CAMERA_PRIM, "Camera")
