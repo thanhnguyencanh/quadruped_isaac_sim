@@ -54,6 +54,7 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 ```
 
 `spot_sar_sim/spot_sar_sim/standalone/`:
+- `spot_view_scene.py` — **minimal viewer (no ROS):** boots the Isaac Sim GUI, loads the SAR environment (walled room + victim markers) and Spot (standing), and renders. The simplest way to *see* the scene and the first step-by-step bring-up check before adding ROS. GUI by default; `--headless` to drop the window.
 - `spot_smoke_test.py` — fast physics-only validation (Spot walks ~2.76 m, no rendering). The go-to health check.
 - `spot_smoke_render.py` — RTX render-path validation (slow first run; for camera-sensor work later).
 - `spot_cmd_vel_app.py` — Phase 1 app: drive Spot from ROS 2 `/cmd_vel`; bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf`.
@@ -189,7 +190,10 @@ spawns Spot, so the viewport shows the whole scene.
 cd ~/unige_ws/src/quadruped_isaac_sim
 export DISPLAY=:0                       # your X display (run `echo $DISPLAY` in a desktop terminal)
 
-# See the SAR environment + Spot, rendering on, in the GUI viewport
+# Simplest: just the scene — SAR environment + Spot, no ROS (recommended first step)
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py
+
+# …or the perception app: same SAR environment + Spot, plus the RGB-D camera + ROS bridge
 ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
     spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --gui
 
