@@ -77,6 +77,20 @@ def _label(prim, semantic_label):
         pass
 
 
+def _add_lighting(define_prim, UsdLux, Gf):
+    """Even, shadow-filling lighting so EVERY room is visible. The 2 m walls block a single key
+    light and leave the side rooms dark, so we add a bright DomeLight (ambient fill from all
+    directions — reaches the roofless rooms) plus an overhead DistantLight for a bit of shading.
+    Idempotent-ish: re-defining the same prim paths just re-sets the attrs."""
+    stage = define_prim("/World/SceneLights", "Xform").GetStage()
+    dome = UsdLux.DomeLight.Define(stage, "/World/SceneLights/Dome")
+    dome.CreateIntensityAttr(1200.0)
+    dome.CreateColorAttr(Gf.Vec3f(1.0, 1.0, 1.0))
+    key = UsdLux.DistantLight.Define(stage, "/World/SceneLights/Key")
+    key.CreateIntensityAttr(1500.0)   # shines along local -Z = straight down (lights every floor)
+    key.CreateColorAttr(Gf.Vec3f(1.0, 1.0, 0.97))
+
+
 def build_sar_scene(label_semantics=False):
     """Create the walled room + victims (orange, labelled 'victim') + a distractor.
 
@@ -84,9 +98,10 @@ def build_sar_scene(label_semantics=False):
     live sim (the perception app doesn't need semantics and labelling pulls in Replicator).
     Returns the list of victim (x, y, z) world positions.
     """
-    from pxr import Gf, Sdf, UsdGeom, UsdShade
+    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
     from isaacsim.core.experimental.utils.stage import define_prim
 
+    _add_lighting(define_prim, UsdLux, Gf)
     for name, pos, scale in WALLS:
         _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, scale, WALL_COLOR)
 
@@ -131,10 +146,11 @@ def build_floor_scene(label_semantics=False):
     sys.path before calling this — one source of truth shared with the grounding node + planner).
     Returns (victim_xyz_list, door_handles) where door_handles[door_id] = {prim, closed, open}.
     """
-    from pxr import Gf, Sdf, UsdGeom, UsdShade, UsdPhysics
+    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, UsdPhysics
     from isaacsim.core.experimental.utils.stage import define_prim
     import sar_floor as FLOOR
 
+    _add_lighting(define_prim, UsdLux, Gf)  # fill light so every room is visible
     # 1. walls — static colliders
     for name, pos, size in FLOOR.wall_segments():
         p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, size, WALL_COLOR)
