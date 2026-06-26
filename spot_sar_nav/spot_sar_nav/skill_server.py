@@ -70,8 +70,16 @@ class SkillServer(Node):
         self.n_victims = len(m.victims)
 
     def _on_door_state(self, m):
-        if m.data.strip():
-            self._opened_doors.add(m.data.strip())
+        # "<id>" or "<id> open" -> open; "<id> close[d]" -> closed
+        parts = m.data.split()
+        if not parts:
+            return
+        did = parts[0].strip()
+        state = parts[1].strip().lower() if len(parts) > 1 else "open"
+        if state.startswith("open"):
+            self._opened_doors.add(did)
+        else:
+            self._opened_doors.discard(did)
 
     def _open_door(self, door_id, timeout=20.0):
         """Publish the open command and BLOCK until /door_states confirms the door is open.

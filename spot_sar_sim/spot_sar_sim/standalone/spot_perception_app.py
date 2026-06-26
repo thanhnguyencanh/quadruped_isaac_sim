@@ -137,40 +137,51 @@ class CmdVelNode(Node):
 
 
 class DoorNode(Node):
-    """In-process door bus (floor demo). Subscribes /door_cmd (std_msgs/String = door id to open),
-    lifts the named slab open over ~1 s by mutating its cached translate op each frame, and
-    publishes /door_states (the door id that finished opening) on a TRANSIENT_LOCAL (latched)
-    publisher so a late-joining skill/grounding subscriber still sees it.
+    """In-process door bus (floor demo). Subscribes /door_cmd (std_msgs/String) and drives the
+    named slab toward open or closed by mutating its cached translate op each frame, then publishes
+    /door_states on a TRANSIENT_LOCAL (latched) publisher so late-joining subscribers still see it.
 
-    door_handles[id] = {prim, closed(xyz), open(xyz), op (translate XformOp), frac}.
+    /door_cmd payload:  "<door_id>"        -> open  (e.g. "door_bc"; back-compat)
+                        "<door_id> open"   -> open
+                        "<door_id> close"  -> close
+    /door_states payload: "<door_id> open" | "<door_id> closed"  (published once the slab arrives)
+
+    door_handles[id] = {prim, closed(xyz), open(xyz), op (translate XformOp), frac}. frac: 0=closed..1=open.
     """
 
     def __init__(self, door_handles):
         super().__init__("spot_doors")
         self.handles = door_handles
-        self.commanded = set()
-        self._announced = set()
+        self.targets = {d: 0.0 for d in door_handles}  # desired frac per door (0 closed .. 1 open)
         latched = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(String, "/door_cmd", self._on_cmd, 10)
         self.state_pub = self.create_publisher(String, "/door_states", latched)
 
     def _on_cmd(self, msg: String):
-        did = msg.data.strip()
+        parts = msg.data.split()
+        if not parts:
+            return
+        did = parts[0].strip()
+        action = parts[1].strip().lower() if len(parts) > 1 else "open"
         if did in self.handles:
-            self.commanded.add(did)
+            self.targets[did] = 0.0 if action == "close" else 1.0
 
     def step(self, rate):
-        """Advance commanded slabs toward open by `rate` of the travel per frame; announce on open."""
-        for did in list(self.commanded):
-            h = self.handles[did]
-            h["frac"] = min(1.0, h["frac"] + rate)
+        """Lerp each slab toward its target frac (both directions); announce when it arrives."""
+        for did, h in self.handles.items():
+            tgt = self.targets[did]
+            f = h["frac"]
+            if abs(f - tgt) < 1e-6:
+                continue
+            f = min(tgt, f + rate) if f < tgt else max(tgt, f - rate)
+            h["frac"] = f
             cx, cy, cz = h["closed"]
             oz = h["open"][2]
-            h["op"].Set(Gf.Vec3d(cx, cy, cz + (oz - cz) * h["frac"]))
-            if h["frac"] >= 1.0 and did not in self._announced:
-                self.state_pub.publish(String(data=did))
-                self._announced.add(did)
-                self.get_logger().info(f"door '{did}' fully open")
+            h["op"].Set(Gf.Vec3d(cx, cy, cz + (oz - cz) * f))
+            if abs(f - tgt) < 1e-6:  # just arrived
+                state = "open" if tgt >= 1.0 else "closed"
+                self.state_pub.publish(String(data=f"{did} {state}"))
+                self.get_logger().info(f"door '{did}' fully {state}")
 
 
 # ---------------------------------------------------------------- scene + robot

@@ -47,9 +47,16 @@ class FloorWorldModelNode(Node):
         )
 
     def _on_door_state(self, msg: String):
-        did = msg.data.strip()
-        if did:
+        # "<id>" or "<id> open" -> open; "<id> close[d]" -> closed
+        parts = msg.data.split()
+        if not parts:
+            return
+        did = parts[0].strip()
+        state = parts[1].strip().lower() if len(parts) > 1 else "open"
+        if state.startswith("open"):
             self.open_doors.add(did)
+        else:
+            self.open_doors.discard(did)
 
     def _robot_room(self):
         try:

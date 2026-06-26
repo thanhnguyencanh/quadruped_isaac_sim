@@ -272,9 +272,12 @@ ros2 launch spot_sar_bringup floor_mission.launch.py
 # …or just the floor environment + door bus (no planner) to drive/inspect it:
 ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
     spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor --gui
-# open a door by hand and watch the slab lift:
-ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: door_bc}'
-ros2 topic echo /door_states        # the sim announces "door_bc" once the slab finishes opening
+
+# control a door BY ID on /door_cmd — ids are door_ab (rooms A–B) and door_bc (rooms B–C):
+ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: door_bc}'          # open  (bare id = open)
+ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: "door_bc close"}'  # close
+ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: "door_ab open"}'   # open the other door
+ros2 topic echo /door_states   # "<id> open" | "<id> closed" once the slab arrives (latched, replays history)
 ```
 
 How it fits together (single source of truth: `spot_sar_planning/spot_sar_planning/sar_floor.py` —
@@ -283,7 +286,7 @@ rooms, doors, victims, `room_of`):
 | Layer | What it does |
 |---|---|
 | **Scene** | `sar_scene.build_floor_scene()` — perimeter + divider walls (door gaps) + a sliding **door slab** per door, all with colliders |
-| **Door bus** | the `--floor` app hosts a `DoorNode`: `/door_cmd` (door id) lifts the slab open over ~1 s; `/door_states` announces it (latched) |
+| **Door bus** | the `--floor` app hosts a `DoorNode`: `/door_cmd` (`"<id>"`/`"<id> open"`/`"<id> close"`) slides the slab open/closed over ~1 s; `/door_states` (`"<id> open/closed"`) announces it (latched) |
 | **PDDL** | `domain_doors.pddl` — `move ?from ?to ?d` requires `(door-open ?d)`; only `open-door` opens a door ⇒ the planner is **forced to open before traversing** (verified with Fast Downward) |
 | **Grounding** | `floor_world_model_node` — a **room-graph** `/world_model` (rooms + doors + live `door_open`) |
 | **Executive / skill** | run with `domain_profile:=doors`; dispatches the **`open_door`** skill, which publishes `/door_cmd` and blocks until `/door_states` confirms |
