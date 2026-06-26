@@ -13,6 +13,11 @@ Inputs (from spot_perception_app.py):
 
 Output:
   /victims                 spot_sar_msgs/VictimArray
+  /camera/rgb/detections   sensor_msgs/Image          (raw RGB + green detection boxes; for RViz)
+  /victims/markers         visualization_msgs/MarkerArray (3D spheres at victim positions; for RViz)
+
+The two visualization topics are published only when something subscribes (RViz), so they add
+no cost during headless autonomy runs.
 
 This is intentionally simple and learning-free for a first cut — a real perception model
 replaces the HSV stage later. Detection is by saturated colour so it stays deterministic in
@@ -34,6 +39,7 @@ from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformListener, LookupException, ConnectivityException, ExtrapolationException
 import tf2_geometry_msgs  # noqa: F401  (registers PointStamped for do_transform_point)
+from visualization_msgs.msg import Marker, MarkerArray
 
 from spot_sar_msgs.msg import Victim, VictimArray
 
@@ -47,6 +53,9 @@ class VictimDetector(Node):
         self.declare_parameter("depth_topic", "/camera/depth/image_raw")
         self.declare_parameter("info_topic", "/camera/rgb/camera_info")
         self.declare_parameter("victims_topic", "/victims")
+        # visualization outputs (published only when something subscribes — free otherwise)
+        self.declare_parameter("overlay_topic", "/camera/rgb/detections")  # raw RGB + boxes
+        self.declare_parameter("markers_topic", "/victims/markers")        # 3D spheres for RViz
         # map appears only once SLAM (Phase 3) runs; until then odom is the fixed frame.
         self.declare_parameter("target_frame", "odom")
         self.declare_parameter("optical_frame", "camera_optical_frame")
@@ -71,6 +80,8 @@ class VictimDetector(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.pub = self.create_publisher(VictimArray, g("victims_topic").value, 10)
+        self.overlay_pub = self.create_publisher(Image, g("overlay_topic").value, 10)
+        self.marker_pub = self.create_publisher(MarkerArray, g("markers_topic").value, 10)
         self.create_subscription(CameraInfo, g("info_topic").value, self._on_info, 10)
 
         rgb_sub = message_filters.Subscriber(self, Image, g("rgb_topic").value, qos_profile=qos_profile_sensor_data)
@@ -140,6 +151,7 @@ class VictimDetector(Node):
         fx, fy = self.K[0, 0], self.K[1, 1]
         cx0, cy0 = self.K[0, 2], self.K[1, 2]
 
+        dets = []  # per published victim: (bbox_LTWH, (ui,vi), z, conf, pt_target) — for viz
         for lab in range(1, n):  # 0 is background
             area = int(stats[lab, cv2.CC_STAT_AREA])
             if area < self.min_area:
@@ -156,17 +168,24 @@ class VictimDetector(Node):
             if pt is None:
                 continue
 
+            conf = float(min(1.0, area / 5000.0))
             vic = Victim()
             vic.header.stamp = rgb_msg.header.stamp
             vic.header.frame_id = self.target_frame
             vic.id = -1  # unassociated; the world model assigns/merges IDs later
             vic.pose.position.x, vic.pose.position.y, vic.pose.position.z = pt
             vic.pose.orientation.w = 1.0
-            vic.confidence = float(min(1.0, area / 5000.0))
+            vic.confidence = conf
             vic.source = "rgbd"
             out.victims.append(vic)
 
+            bbox = (int(stats[lab, cv2.CC_STAT_LEFT]), int(stats[lab, cv2.CC_STAT_TOP]),
+                    int(stats[lab, cv2.CC_STAT_WIDTH]), int(stats[lab, cv2.CC_STAT_HEIGHT]))
+            dets.append((bbox, (ui, vi), float(z), conf, pt))
+
         self.pub.publish(out)
+        self._publish_overlay(bgr, dets, rgb_msg.header)   # raw + detection boxes (RViz Image)
+        self._publish_markers(dets, rgb_msg.header)         # 3D spheres in target_frame (RViz)
         if out.victims:
             self.get_logger().info(
                 f"detected {len(out.victims)} victim(s); first @ "
@@ -174,6 +193,46 @@ class VictimDetector(Node):
                 f"{out.victims[0].pose.position.z:.2f}) [{self.target_frame}]",
                 throttle_duration_sec=2.0,
             )
+
+    def _publish_overlay(self, bgr, dets, header):
+        """Draw detection boxes/labels on the RGB and publish — only if someone subscribes."""
+        if self.overlay_pub.get_subscription_count() == 0:
+            return
+        img = bgr.copy()
+        for (L, T, W, H), (ui, vi), z, conf, _pt in dets:
+            cv2.rectangle(img, (L, T), (L + W, T + H), (0, 255, 0), 2)
+            cv2.circle(img, (ui, vi), 4, (0, 255, 0), -1)
+            cv2.putText(img, f"victim {conf:.2f} {z:.1f}m", (L, max(12, T - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.putText(img, f"detections: {len(dets)}", (8, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        msg = self.bridge.cv2_to_imgmsg(img, encoding="bgr8")
+        msg.header = header  # keep frame_id=camera_optical_frame, stamp aligned with the raw image
+        self.overlay_pub.publish(msg)
+
+    def _publish_markers(self, dets, header):
+        """Publish victim positions as 3D spheres in target_frame — only if someone subscribes."""
+        if self.marker_pub.get_subscription_count() == 0:
+            return
+        ma = MarkerArray()
+        clear = Marker()
+        clear.header.frame_id = self.target_frame
+        clear.action = Marker.DELETEALL  # drop stale spheres from the previous frame
+        ma.markers.append(clear)
+        for i, (_bbox, _uv, _z, _conf, pt) in enumerate(dets):
+            m = Marker()
+            m.header.frame_id = self.target_frame
+            m.header.stamp = header.stamp
+            m.ns = "victims"
+            m.id = i
+            m.type = Marker.SPHERE
+            m.action = Marker.ADD
+            m.pose.position.x, m.pose.position.y, m.pose.position.z = pt
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.4
+            m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.25, 0.0, 0.9
+            ma.markers.append(m)
+        self.marker_pub.publish(ma)
 
     def _to_target(self, x, y, z, stamp):
         ps = PointStamped()

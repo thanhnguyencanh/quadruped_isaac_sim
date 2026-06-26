@@ -228,6 +228,41 @@ ros2 run spot_sar_sim teleop_keyboard
 > viewport appears — subsequent launches are fast. `--gui` adds the window + extra render load on top
 > of the already-on camera render path, so keep it to one app at a time on 8 GB VRAM.
 
+### Visualize in RViz (recommended for the full stack)
+
+Rather than the heavy Isaac GUI, run Isaac **headless** and watch everything in **RViz2** over
+ROS 2 — lighter on 8 GB VRAM and no shader-compile freeze. Everything in the stack is already a
+ROS topic, so RViz shows the raw camera, the **detection overlay**, the lidar scan, the SLAM map,
+Nav2 costmaps/paths, victim markers, and TF.
+
+```bash
+# Terminal A — bring the stack up HEADLESS (no --gui), on domain 42
+export ROS_DOMAIN_ID=42
+ros2 launch spot_sar_bringup perception.launch.py     # camera + detector
+#   or mapping.launch.py (adds /scan + SLAM /map), or mission.launch.py (full autonomy)
+
+# Terminal B — open RViz preloaded with the SAR config, SAME domain
+export ROS_DOMAIN_ID=42
+ros2 launch spot_sar_bringup rviz.launch.py
+```
+
+Preloaded displays (`spot_sar_bringup/rviz/sar.rviz`, fixed frame `odom`):
+
+| Display | Topic | Shows |
+|---|---|---|
+| Camera RAW | `/camera/rgb/image_raw` | the raw RGB stream |
+| Detections | `/camera/rgb/detections` | RGB **+ green detection boxes** + confidence/range labels |
+| Victims | `/victims/markers` | 3D spheres at detected victim positions (in `odom`/`map`) |
+| LaserScan | `/scan` | the depth-derived lidar (mapping/mission) |
+| Map | `/map` | the slam_toolbox occupancy grid (mapping/mission) |
+| Global/Local Costmap | `/global_costmap/costmap`, `/local_costmap/costmap` | Nav2 costmaps (off by default — tick to enable) |
+| Nav2 Path | `/plan` | the planned path |
+| TF | — | the `odom→base_link→camera_*` frames |
+
+The detector publishes `/camera/rgb/detections` (annotated image) and `/victims/markers` **only when
+RViz subscribes**, so they add no overhead during headless autonomy runs. RViz must be on the same
+`ROS_DOMAIN_ID` as the sim — see the footgun note above.
+
 > **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
 > [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
 > Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).
