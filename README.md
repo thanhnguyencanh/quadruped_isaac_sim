@@ -6,7 +6,7 @@ unknown disaster-like indoor environment, detects victims, and reports them — 
 next action inside a closed **SENSE → GROUND → PLAN → ACT → MONITOR → REPLAN** loop.
 
 University of Genoa (UNIGE) / DIBRIS research grant **D.R. 2237/26** —
-supervisor Prof. Antonio Sgorbissa. Simulation-first, 3 months, remote-capable.
+supervisor Prof. Antonio Sgorbissa.
 
 ## This machine's stack (verified)
 
@@ -18,11 +18,6 @@ supervisor Prof. Antonio Sgorbissa. Simulation-first, 3 months, remote-capable.
 | ROS 2 | **Jazzy** (Python 3.12) |
 | Nav2 / SLAM | `ros-jazzy-navigation2`, `ros-jazzy-slam-toolbox`, `depthimage_to_laserscan` (installed) |
 | Planner venv | `~/sar_planning_venv` — unified-planning 1.3.0 + Fast Downward + ENHSP (verified) |
-
-> The implementation guide in [docs/](docs/) was originally written for Ubuntu 22.04 / ROS 2
-> Humble / Python 3.10; it has been patched in place to this stack (see the "STACK ADAPTATION"
-> callout at its top). The port is clean because Isaac Sim 6.0 bundles Python **3.12** (matches
-> Jazzy) and its `isaacsim.ros2.bridge` ships Jazzy libraries. The binding constraint is **8 GB VRAM**.
 
 ## Status
 
@@ -65,6 +60,51 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 - `spot_perception_app.py` — Phase 2 app: superset of the Phase 1 app + a body-mounted RGB-D camera (`/camera/rgb/image_raw`, `/camera/depth/image_raw`, `/camera/rgb/camera_info`). **Rendering on** (the camera needs the RTX render path), unlike the physics-only Phase 1 app.
 - `sar_scene.py` — shared SAR environment builder (walled room + multiple orange "victim" markers + a distractor, with `UsdSemantics` class labels); used by the live sim **and** the dataset generator.
 - `replicator_sar_sdg.py` — Phase 2 synthetic-data generator: NVIDIA Replicator renders randomized viewpoints → a labelled dataset (RGB + 2D bbox + semantic segmentation, classes `victim`/`distractor`) under `~/unige_ws/datasets/sar_victims/`. Trains a learned detector (YOLO) to replace the HSV first cut.
+
+## Helper scripts
+
+Two wrappers hide the environment footguns so you never invoke Isaac's `python.sh` or a raw
+`docker run` by hand.
+
+### `scripts/run_isaac.sh` — launch an Isaac Sim standalone app
+
+```bash
+./scripts/run_isaac.sh <script.py> [args...]
+# e.g.
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_smoke_test.py
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/replicator_sar_sdg.py --frames 200
+```
+
+What it does, in order: (1) `conda deactivate` (twice — the auto-activated `base` env's Python 3.13
+shadows ROS/Isaac); (2) source ROS 2 Jazzy + the `~/unige_ws` colcon overlay (so the in-process
+`rclpy` node and the `isaacsim.ros2.bridge` resolve `std_msgs` + `spot_sar_msgs`); (3) pin the real
+asset root and `ROS_DOMAIN_ID`; (4) resolve the script to an absolute path **before** `cd`-ing into
+`~/isaacsim`, then `exec ./python.sh` (Isaac's bundled Python 3.12, which matches Jazzy).
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ISAAC_DIR` | `~/isaacsim` | Isaac Sim workstation install (where `python.sh` lives). |
+| `WS_DIR` | `~/unige_ws` | colcon workspace whose `install/setup.bash` is overlaid. |
+| `ROS_DOMAIN_ID` | `42` | DDS domain — must match every `ros2` CLI shell. |
+| `ISAAC_ASSETS` | `~/isaacsim_assets` | Real local asset root (the persistent config points at a stale `/home/isaac` path). |
+
+### `docker/run_unige_docker.sh` — start the ROS-side container
+
+Isaac Sim stays on the **host**; this runs the `thanhnc19/unige_legged` image (Nav2, slam_toolbox,
+perception, planner) with this repo bind-mounted and host networking, so its nodes discover the
+Isaac ROS 2 bridge over DDS.
+
+```bash
+./docker/run_unige_docker.sh                                   # interactive shell in the container
+CMD="ros2 launch spot_sar_bringup perception.launch.py" \
+    ./docker/run_unige_docker.sh                               # run one command, then exit
+```
+
+It mounts the repo at `/opt/unige_ws/src/quadruped_isaac_sim` (build/install stay container-side),
+adds `--gpus all` when `nvidia-smi` is present, and shares `--net=host --ipc=host` + `ROS_DOMAIN_ID`
++ the X11 socket. Override `IMAGE`, `TAG`, `ROS_DOMAIN_ID`, or `CMD` via env vars. Build/push the
+image with `docker/build_docker.sh` / `docker/push_docker.sh`; see [docker/README.md](docker/README.md).
 
 ## Installation (prerequisites)
 
