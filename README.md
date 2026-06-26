@@ -206,6 +206,23 @@ ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
 #   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.5}}'   # turn in place
 ```
 
+### Drive Spot from the keyboard
+
+Instead of one-shot `ros2 topic pub`, use the interactive keyboard teleop — it streams `/cmd_vel`
+while you steer with **WASD** (`w/s` fwd/back, `a/d` turn, `q/e` strafe, **space** = stop, `+/-` speed):
+
+```bash
+export ROS_DOMAIN_ID=42        # MUST match the sim's domain (see the footgun below)
+ros2 run spot_sar_sim teleop_keyboard
+# focus this terminal and press keys; Ctrl-C sends a final stop and quits
+# (zero-code alternative, also installed: `ros2 run teleop_twist_keyboard teleop_twist_keyboard`)
+```
+
+> **`ROS_DOMAIN_ID` must match.** DDS only connects nodes on the *same* domain. If the sim is on
+> domain 42 but your teleop/publisher shell is on a different domain (e.g. an unset/`0` default), the
+> command never reaches Spot and it just stands still. Run `echo $ROS_DOMAIN_ID` in **both** the sim
+> terminal and the teleop terminal — the numbers must be equal. This project standardizes on **42**.
+
 > **GUI notes:** the window opens on the X server named by `DISPLAY` (a desktop session, e.g. `:0`/`:1`).
 > The first GUI launch compiles RTX shaders (cold Blackwell cache) and can take a minute before the
 > viewport appears — subsequent launches are fast. `--gui` adds the window + extra render load on top

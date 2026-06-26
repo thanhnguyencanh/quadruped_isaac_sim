@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'teleop_keyboard = spot_sar_sim.teleop_keyboard:main',
         ],
     },
 )
