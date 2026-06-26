@@ -18,6 +18,7 @@ supervisor Prof. Antonio Sgorbissa.
 | ROS 2 | **Jazzy** (Python 3.12) |
 | Nav2 / SLAM | `ros-jazzy-navigation2`, `ros-jazzy-slam-toolbox`, `depthimage_to_laserscan` (installed) |
 | Planner venv | `~/sar_planning_venv` — unified-planning 1.3.0 + Fast Downward + ENHSP (verified) |
+| YOLO venv | `~/yolo_venv` — ultralytics 8.4 + CPU torch 2.12 (numpy pinned 1.26 to match ROS), YOLOv8n (verified detecting Isaac humans) |
 
 ## Status
 
@@ -138,6 +139,18 @@ pip install --upgrade pip
 pip install unified-planning up-fast-downward up-enhsp
 python -c "from unified_planning.shortcuts import get_environment; print(list(get_environment().factory.engines)[:5])"
 deactivate
+
+# 6. YOLO venv  (✓ ~/yolo_venv) — the learned victim detector (pretrained YOLOv8, no training).
+#    --system-site-packages => rclpy/cv_bridge import; numpy PINNED to 1.26 to match ROS's ABI
+#    (cv_bridge is built against numpy 1.x; torch/opencv would otherwise pull numpy 2.x and clash).
+python3.12 -m venv --system-site-packages ~/yolo_venv
+source ~/yolo_venv/bin/activate && pip install --upgrade pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # CPU wheel (~200 MB)
+pip install ultralytics
+pip install "numpy==1.26.4" "opencv-python==4.9.0.80"     # MUST pin to the system numpy ABI
+yolo predict model=yolov8n.pt source=https://ultralytics.com/images/bus.jpg      # fetch weights once
+cp yolov8n.pt ~/yolo_venv/yolov8n.pt                      # pin absolute path (no re-download at launch)
+deactivate
 ```
 
 > `ROS_DOMAIN_ID` is used to isolate DDS traffic; this project standardizes on **42**. Export the
@@ -183,6 +196,22 @@ ros2 launch spot_sar_bringup floor_mission.launch.py    # multi-room floor + ope
 > (`echo $ROS_DOMAIN_ID` in both shells must match). (2) The first **`--gui`** launch compiles RTX shaders
 > (cold Blackwell cache) and may sit on a black *"not responding"* window for ~1 min — click **Wait**, not
 > Force Quit. On 8 GB VRAM, prefer **headless + RViz** over the Isaac GUI.
+
+### Victims: human figures + YOLO (default), or boxes + HSV (opt-out)
+
+By **default** the victims are **realistic Isaac People humans** detected by a **pretrained YOLOv8**
+(`person` class) running on CPU from `~/yolo_venv` — verified detecting a rendered Isaac human at
+**0.94** confidence, ~8 Hz. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
+overlay + `/victims/markers`); pick via launch args:
+
+```bash
+ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
+ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
+```
+
+`humans:=…` / `detector:=…` thread through `mapping` → `sar_system` → `mission`/`floor_mission`. The
+YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
+reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
 
 ### Visualize in RViz
 

@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'detector_node = spot_sar_perception.detector_node:main',
+            'yolo_detector_node = spot_sar_perception.yolo_detector_node:main',
         ],
     },
 )

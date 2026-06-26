@@ -31,6 +31,11 @@ VICTIM_POS = [
 DISTRACTOR_COLOR = (0.1, 0.2, 0.9)
 DISTRACTOR_POS = (-2.0, -3.0, 0.3)
 
+# Isaac People characters used as human victims (relative to assets_root_path). Cycled across
+# victim positions. These are realistic, textured, standing humans -> a pretrained YOLO 'person'
+# detector finds them. (Resolve via assets_root_path + f"/Isaac/People/Characters/{n}/{n}.usd".)
+HUMAN_CHARACTERS = ["F_Business_02", "M_Medical_01", "male_adult_construction_05_new"]
+
 
 def _box(define_prim, UsdGeom, Gf, path, pos, scale, color, size=1.0):
     prim = define_prim(path, "Cube")
@@ -77,6 +82,46 @@ def _label(prim, semantic_label):
         pass
 
 
+def _add_human(define_prim, UsdGeom, Gf, path, pos, yaw_deg, character_usd):
+    """Reference an Isaac People character (SkelRoot, Z-up) at a victim position, standing on the
+    floor. A static reference renders the skeleton's BIND POSE (standing) — no animation graph
+    needed. `pos` is the FOOT position; z is forced to 0 (characters stand on the ground)."""
+    prim = define_prim(path, "Xform")
+    prim.GetReferences().AddReference(character_usd)
+    xf = UsdGeom.Xformable(prim)
+    xf.ClearXformOpOrder()
+    xf.AddTranslateOp().Set(Gf.Vec3d(float(pos[0]), float(pos[1]), 0.0))
+    xf.AddRotateZOp().Set(float(yaw_deg))  # face a chosen direction
+    return prim
+
+
+def _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions, humans, assets_root_path,
+                       label_semantics):
+    """Place victims as Isaac People humans (if humans + assets_root_path) or orange emissive boxes.
+    `positions` is a list of (x, y, z). Returns the list of reported victim positions."""
+    use_humans = bool(humans and assets_root_path)
+    if humans and not assets_root_path:
+        print("[sar_scene] humans requested but no assets_root_path given; using orange markers",
+              flush=True)
+    out = []
+    for i, (x, y, z) in enumerate(positions):
+        if use_humans:
+            name = HUMAN_CHARACTERS[i % len(HUMAN_CHARACTERS)]
+            usd = assets_root_path + f"/Isaac/People/Characters/{name}/{name}.usd"
+            yaw = 180.0 if x > 0 else 0.0  # roughly face the room interior / patrolling robot
+            p = _add_human(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, 0.0), yaw, usd)
+            if label_semantics:
+                _label(p, "victim")
+            out.append((x, y, 0.0))  # report foot position (z=0)
+        else:
+            p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, z), None, VICTIM_COLOR, size=0.5)
+            _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
+            if label_semantics:
+                _label(p, "victim")
+            out.append((x, y, z))
+    return out
+
+
 def _add_lighting(define_prim, UsdLux, Gf):
     """Even, shadow-filling lighting so EVERY room is visible. The 2 m walls block a single key
     light and leave the side rooms dark, so we add a bright DomeLight (ambient fill from all
@@ -91,11 +136,13 @@ def _add_lighting(define_prim, UsdLux, Gf):
     key.CreateColorAttr(Gf.Vec3f(1.0, 1.0, 0.97))
 
 
-def build_sar_scene(label_semantics=False):
-    """Create the walled room + victims (orange, labelled 'victim') + a distractor.
+def build_sar_scene(label_semantics=False, humans=True, assets_root_path=None):
+    """Create the walled room + victims + a distractor.
 
-    label_semantics: apply UsdSemantics class labels (for the Replicator SDG). Leave False in the
-    live sim (the perception app doesn't need semantics and labelling pulls in Replicator).
+    humans + assets_root_path: place realistic Isaac People characters as victims (the YOLO target);
+      if humans is False (or assets_root_path is missing — e.g. the Replicator SDG), fall back to the
+      orange emissive markers (the HSV target).
+    label_semantics: apply UsdSemantics class labels (for the Replicator SDG).
     Returns the list of victim (x, y, z) world positions.
     """
     from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
@@ -105,11 +152,8 @@ def build_sar_scene(label_semantics=False):
     for name, pos, scale in WALLS:
         _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, scale, WALL_COLOR)
 
-    for i, pos in enumerate(VICTIM_POS):
-        p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", pos, None, VICTIM_COLOR, size=0.5)
-        _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
-        if label_semantics:
-            _label(p, "victim")
+    victims = _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, list(VICTIM_POS),
+                                 humans, assets_root_path, label_semantics)
 
     d = _box(define_prim, UsdGeom, Gf, "/World/Distractor_0", DISTRACTOR_POS, None,
              DISTRACTOR_COLOR, size=0.5)
@@ -117,7 +161,7 @@ def build_sar_scene(label_semantics=False):
     if label_semantics:
         _label(d, "distractor")
 
-    return list(VICTIM_POS)
+    return victims
 
 
 # ---------------------------------------------------------------- multi-room floor (door demo)
@@ -138,7 +182,7 @@ def _add_kinematic_collider(UsdPhysics, prim):
     rb.CreateKinematicEnabledAttr(True)
 
 
-def build_floor_scene(label_semantics=False):
+def build_floor_scene(label_semantics=False, humans=True, assets_root_path=None):
     """Multi-room floor (sar_floor.py): perimeter + divider walls with door gaps, a sliding door
     slab per door, and victim markers. Walls/slabs get colliders so SLAM/Nav2 see them.
 
@@ -165,13 +209,9 @@ def build_floor_scene(label_semantics=False):
         _add_kinematic_collider(UsdPhysics, p)
         door_handles[d.id] = {"prim": p, "closed": closed, "open": opened}
 
-    # 3. victims — orange emissive markers (the HSV detector still finds them)
-    victims = []
-    for i, (x, y, z, _room) in enumerate(FLOOR.VICTIMS):
-        p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, z), None, VICTIM_COLOR, size=0.5)
-        _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
-        if label_semantics:
-            _label(p, "victim")
-        victims.append((x, y, z))
+    # 3. victims — Isaac People humans (YOLO target) or orange emissive markers (HSV target)
+    positions = [(x, y, z) for (x, y, z, _room) in FLOOR.VICTIMS]
+    victims = _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions,
+                                 humans, assets_root_path, label_semantics)
 
     return victims, door_handles

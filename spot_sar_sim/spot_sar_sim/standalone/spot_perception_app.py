@@ -55,6 +55,8 @@ parser = argparse.ArgumentParser(description="Spot RGB-D camera + ROS 2 percepti
 parser.add_argument("--gui", action="store_true", help="show the GUI window (default headless)")
 parser.add_argument("--floor", action="store_true",
                     help="build the multi-room floor (walls + openable doors) instead of the single room")
+parser.add_argument("--no-humans", dest="humans", action="store_false",
+                    help="use orange box victims (HSV detector) instead of human figures (YOLO)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
@@ -202,16 +204,17 @@ base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz]; mutated in pl
 
 # ---- SAR environment: single walled room OR the multi-room floor with openable doors ----
 if args.floor:
-    _victims, _door_handles = build_floor_scene()
+    _victims, _door_handles = build_floor_scene(humans=args.humans, assets_root_path=assets_root_path)
     for _did, _h in _door_handles.items():
         # cache the slab's translate op (ordered op [0]) so DoorNode mutates it each frame
         _h["op"] = UsdGeom.Xformable(_h["prim"]).GetOrderedXformOps()[0]
         _h["frac"] = 0.0
-    print(f"[perception] FLOOR scene: {len(_victims)} victim(s); doors={list(_door_handles)}", flush=True)
+    print(f"[perception] FLOOR scene: {len(_victims)} victim(s) (humans={args.humans}); "
+          f"doors={list(_door_handles)}", flush=True)
 else:
-    _victims = build_sar_scene()
+    _victims = build_sar_scene(humans=args.humans, assets_root_path=assets_root_path)
     _door_handles = {}
-    print(f"[perception] SAR scene: {len(_victims)} victim(s) at {_victims}", flush=True)
+    print(f"[perception] SAR scene: {len(_victims)} victim(s) (humans={args.humans}) at {_victims}", flush=True)
 
 # ---- forward-facing RGB-D camera, child of the body so it tracks the chassis ----
 cam_prim = define_prim(CAMERA_PRIM, "Camera")
