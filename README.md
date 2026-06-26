@@ -178,6 +178,35 @@ ros2 launch spot_sar_bringup perception.launch.py
 # First launch triggers a slow RTX shader compile (cold cache) before frames appear.
 ```
 
+### Watch it live — Isaac Sim GUI window
+
+The standalone apps run **headless by default** (no window — best for the 8 GB VRAM budget and for
+data generation). Pass **`--gui`** to open the Isaac Sim viewport and *see* the environment + Spot.
+The perception app is the one to watch: it builds the full **SAR room (walls + victim markers)** and
+spawns Spot, so the viewport shows the whole scene.
+
+```bash
+cd ~/unige_ws/src/quadruped_isaac_sim
+export DISPLAY=:0                       # your X display (run `echo $DISPLAY` in a desktop terminal)
+
+# See the SAR environment + Spot, rendering on, in the GUI viewport
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --gui
+
+# …or just Spot on a ground plane (Phase 1 locomotion app) with the window:
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/spot_cmd_vel_app.py --gui
+
+# Then drive Spot from another shell (SAME ROS_DOMAIN_ID=42) and watch it move:
+#   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear:  {x: 0.6}}'   # walk forward
+#   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.5}}'   # turn in place
+```
+
+> **GUI notes:** the window opens on the X server named by `DISPLAY` (a desktop session, e.g. `:0`/`:1`).
+> The first GUI launch compiles RTX shaders (cold Blackwell cache) and can take a minute before the
+> viewport appears — subsequent launches are fast. `--gui` adds the window + extra render load on top
+> of the already-on camera render path, so keep it to one app at a time on 8 GB VRAM.
+
 > **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
 > [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
 > Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).
