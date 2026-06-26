@@ -147,100 +147,48 @@ deactivate
 ## Quick start
 
 ```bash
-# 1. Build the ROS 2 workspace (conda MUST be deactivated; Jazzy uses Python 3.12)
-conda deactivate
-source /opt/ros/jazzy/setup.bash
+# 0. Once per shell: drop conda, source ROS + the workspace, pick the DDS domain.
+conda deactivate && source /opt/ros/jazzy/setup.bash
 cd ~/unige_ws && colcon build --symlink-install && source install/setup.bash
-
-# 2. Health check — Spot walks in Isaac Sim (headless, physics-only, ~25 s)
+export ROS_DOMAIN_ID=42      # SAME value in EVERY shell (sim + every ros2 CLI) or they can't see each other
 cd ~/unige_ws/src/quadruped_isaac_sim
+
+# 1. Health check — Spot walks (headless, physics-only, ~25 s)
 ./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_smoke_test.py
 #   expect: "[smoke] SUCCESS: Spot loaded its policy and walked forward."
 
-# 3. Phase 1 — Spot driven by ROS 2 /cmd_vel (headless)
-ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_cmd_vel_app.py
-# In another shell (conda deactivated, Jazzy sourced, SAME ROS_DOMAIN_ID=42):
-#   ros2 topic echo /clock --once
-#   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.6}}'
+# 2. Just LOOK at the environment + Spot (no ROS; GUI viewer — orbit with the mouse)
+export DISPLAY=:0            # your desktop X display — run `echo $DISPLAY` in a desktop terminal
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py            # single room
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --floor    # 3-room floor + doors
 
-# 4. Phase 2 — Spot + RGB-D camera + victim detector (headless, rendering on)
+# 3. Phase 1 — drive Spot from ROS 2 /cmd_vel (headless; append --gui for the Isaac window)
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_cmd_vel_app.py
+#   another shell, SAME ROS_DOMAIN_ID=42 — drive Spot:
+#     ros2 run spot_sar_sim teleop_keyboard                                       # WASD teleop (w/s a/d q/e, space=stop)
+#     ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.6}}'  # or a one-shot publish
+
+# 4. Phase 2 — RGB-D camera + victim detector (headless)
 ros2 launch spot_sar_bringup perception.launch.py
-# In another shell (SAME ROS_DOMAIN_ID=42):
-#   ros2 topic hz /camera/rgb/image_raw          # ~25 Hz
-#   ros2 topic echo /camera/rgb/camera_info --once
-#   ros2 topic echo /victims                     # spot_sar_msgs/VictimArray
-# First launch triggers a slow RTX shader compile (cold cache) before frames appear.
+#   visualize EVERYTHING in RViz (another shell, SAME domain) — raw + detection image, /victims, /scan, /map:
+#     ros2 launch spot_sar_bringup rviz.launch.py
+
+# 5. Full autonomy mission — Isaac + SLAM + Nav2 + PDDL executive, one command
+ros2 launch spot_sar_bringup mission.launch.py          # single-room SAR mission
+ros2 launch spot_sar_bringup floor_mission.launch.py    # multi-room floor + openable doors (PDDL open-door)
 ```
 
-### Watch it live — Isaac Sim GUI window
+> **Two recurring gotchas.** (1) Every shell — the Isaac app **and** every `ros2` command — must export the
+> **same `ROS_DOMAIN_ID`** (this project uses **42**), or DDS can't connect them and Spot just stands still
+> (`echo $ROS_DOMAIN_ID` in both shells must match). (2) The first **`--gui`** launch compiles RTX shaders
+> (cold Blackwell cache) and may sit on a black *"not responding"* window for ~1 min — click **Wait**, not
+> Force Quit. On 8 GB VRAM, prefer **headless + RViz** over the Isaac GUI.
 
-The standalone apps run **headless by default** (no window — best for the 8 GB VRAM budget and for
-data generation). Pass **`--gui`** to open the Isaac Sim viewport and *see* the environment + Spot.
-The perception app is the one to watch: it builds the full **SAR room (walls + victim markers)** and
-spawns Spot, so the viewport shows the whole scene.
+### Visualize in RViz
 
-```bash
-cd ~/unige_ws/src/quadruped_isaac_sim
-export DISPLAY=:0                       # your X display (run `echo $DISPLAY` in a desktop terminal)
-
-# Simplest: just the scene — SAR environment + Spot, no ROS (recommended first step)
-./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py
-
-# …or the perception app: same SAR environment + Spot, plus the RGB-D camera + ROS bridge
-ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --gui
-
-# …or just Spot on a ground plane (Phase 1 locomotion app) with the window:
-ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_cmd_vel_app.py --gui
-
-# Then drive Spot from another shell (SAME ROS_DOMAIN_ID=42) and watch it move:
-#   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear:  {x: 0.6}}'   # walk forward
-#   ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.5}}'   # turn in place
-```
-
-### Drive Spot from the keyboard
-
-Instead of one-shot `ros2 topic pub`, use the interactive keyboard teleop — it streams `/cmd_vel`
-while you steer with **WASD** (`w/s` fwd/back, `a/d` turn, `q/e` strafe, **space** = stop, `+/-` speed):
-
-```bash
-export ROS_DOMAIN_ID=42        # MUST match the sim's domain (see the footgun below)
-ros2 run spot_sar_sim teleop_keyboard
-# focus this terminal and press keys; Ctrl-C sends a final stop and quits
-# (zero-code alternative, also installed: `ros2 run teleop_twist_keyboard teleop_twist_keyboard`)
-```
-
-> **`ROS_DOMAIN_ID` must match.** DDS only connects nodes on the *same* domain. If the sim is on
-> domain 42 but your teleop/publisher shell is on a different domain (e.g. an unset/`0` default), the
-> command never reaches Spot and it just stands still. Run `echo $ROS_DOMAIN_ID` in **both** the sim
-> terminal and the teleop terminal — the numbers must be equal. This project standardizes on **42**.
-
-> **GUI notes:** the window opens on the X server named by `DISPLAY` (a desktop session, e.g. `:0`/`:1`).
-> The first GUI launch compiles RTX shaders (cold Blackwell cache) and can take a minute before the
-> viewport appears — subsequent launches are fast. `--gui` adds the window + extra render load on top
-> of the already-on camera render path, so keep it to one app at a time on 8 GB VRAM.
-
-### Visualize in RViz (recommended for the full stack)
-
-Rather than the heavy Isaac GUI, run Isaac **headless** and watch everything in **RViz2** over
-ROS 2 — lighter on 8 GB VRAM and no shader-compile freeze. Everything in the stack is already a
-ROS topic, so RViz shows the raw camera, the **detection overlay**, the lidar scan, the SLAM map,
-Nav2 costmaps/paths, victim markers, and TF.
-
-```bash
-# Terminal A — bring the stack up HEADLESS (no --gui), on domain 42
-export ROS_DOMAIN_ID=42
-ros2 launch spot_sar_bringup perception.launch.py     # camera + detector
-#   or mapping.launch.py (adds /scan + SLAM /map), or mission.launch.py (full autonomy)
-
-# Terminal B — open RViz preloaded with the SAR config, SAME domain
-export ROS_DOMAIN_ID=42
-ros2 launch spot_sar_bringup rviz.launch.py
-```
-
-Preloaded displays (`spot_sar_bringup/rviz/sar.rviz`, fixed frame `odom`):
+`ros2 launch spot_sar_bringup rviz.launch.py` (Quick start step 4) opens RViz preloaded with
+`spot_sar_bringup/rviz/sar.rviz` (fixed frame `odom`) — run Isaac **headless** and watch the whole
+stack over ROS 2, lighter than the Isaac GUI and with no shader-compile freeze. Preloaded displays:
 
 | Display | Topic | Shows |
 |---|---|---|
@@ -253,9 +201,8 @@ Preloaded displays (`spot_sar_bringup/rviz/sar.rviz`, fixed frame `odom`):
 | Nav2 Path | `/plan` | the planned path |
 | TF | — | the `odom→base_link→camera_*` frames |
 
-The detector publishes `/camera/rgb/detections` (annotated image) and `/victims/markers` **only when
-RViz subscribes**, so they add no overhead during headless autonomy runs. RViz must be on the same
-`ROS_DOMAIN_ID` as the sim — see the footgun note above.
+The detector publishes `/camera/rgb/detections` + `/victims/markers` **only when RViz subscribes**, so
+they cost nothing during headless autonomy runs. (RViz must share the sim's `ROS_DOMAIN_ID`.)
 
 ## Multi-room floor with openable doors (PDDL `open-door`)
 
@@ -264,20 +211,17 @@ A more complex environment: a floor of **3 rooms (A–B–C)** separated by wall
 **physically slides the door slab open in Isaac** — before it can `move` into the next room. It's an
 **opt-in parallel path**: the single-room mission (`mission.launch.py`) is unchanged.
 
+The **full closed loop** is `ros2 launch spot_sar_bringup floor_mission.launch.py` (Quick start step 5):
+the executive plans `open-door` → the slab slides open → Spot moves through → detect → report. To
+drive/inspect the floor by hand, run the app with `--floor` and command doors on `/door_cmd`
+(ids: `door_ab` = rooms A–B, `door_bc` = rooms B–C):
+
 ```bash
-# Full door mission in one command (headless Isaac + SLAM + Nav2 + doors planner):
-ros2 launch spot_sar_bringup floor_mission.launch.py
-#   executive plans open-door -> the slab slides open -> it moves through -> detect -> report
-
-# …or just the floor environment + door bus (no planner) to drive/inspect it:
 ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor --gui
-
-# control a door BY ID on /door_cmd — ids are door_ab (rooms A–B) and door_bc (rooms B–C):
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor       # add --gui to watch
 ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: door_bc}'          # open  (bare id = open)
 ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: "door_bc close"}'  # close
-ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: "door_ab open"}'   # open the other door
-ros2 topic echo /door_states   # "<id> open" | "<id> closed" once the slab arrives (latched, replays history)
+ros2 topic echo /door_states   # "<id> open" | "<id> closed" once the slab arrives (latched)
 ```
 
 How it fits together (single source of truth: `spot_sar_planning/spot_sar_planning/sar_floor.py` —
