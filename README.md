@@ -263,6 +263,42 @@ The detector publishes `/camera/rgb/detections` (annotated image) and `/victims/
 RViz subscribes**, so they add no overhead during headless autonomy runs. RViz must be on the same
 `ROS_DOMAIN_ID` as the sim — see the footgun note above.
 
+## Multi-room floor with openable doors (PDDL `open-door`)
+
+A more complex environment: a floor of **3 rooms (A–B–C)** separated by walls and connected by
+**doors**, with victims behind them. The PDDL planner must dispatch an **`open-door`** action — which
+**physically slides the door slab open in Isaac** — before it can `move` into the next room. It's an
+**opt-in parallel path**: the single-room mission (`mission.launch.py`) is unchanged.
+
+```bash
+# Full door mission in one command (headless Isaac + SLAM + Nav2 + doors planner):
+ros2 launch spot_sar_bringup floor_mission.launch.py
+#   executive plans open-door -> the slab slides open -> it moves through -> detect -> report
+
+# …or just the floor environment + door bus (no planner) to drive/inspect it:
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor --gui
+# open a door by hand and watch the slab lift:
+ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: door_bc}'
+ros2 topic echo /door_states        # the sim announces "door_bc" once the slab finishes opening
+```
+
+How it fits together (single source of truth: `spot_sar_planning/spot_sar_planning/sar_floor.py` —
+rooms, doors, victims, `room_of`):
+
+| Layer | What it does |
+|---|---|
+| **Scene** | `sar_scene.build_floor_scene()` — perimeter + divider walls (door gaps) + a sliding **door slab** per door, all with colliders |
+| **Door bus** | the `--floor` app hosts a `DoorNode`: `/door_cmd` (door id) lifts the slab open over ~1 s; `/door_states` announces it (latched) |
+| **PDDL** | `domain_doors.pddl` — `move ?from ?to ?d` requires `(door-open ?d)`; only `open-door` opens a door ⇒ the planner is **forced to open before traversing** (verified with Fast Downward) |
+| **Grounding** | `floor_world_model_node` — a **room-graph** `/world_model` (rooms + doors + live `door_open`) |
+| **Executive / skill** | run with `domain_profile:=doors`; dispatches the **`open_door`** skill, which publishes `/door_cmd` and blocks until `/door_states` confirms |
+
+Verified component-by-component: the PDDL gating (`open-door` before `move`), the executive's
+doors-profile planning, the slab physically opening on `/door_cmd`, and the grounding reflecting the
+live door state. *(Phase 2, planned: swap the HSV detector for a pretrained YOLO person/object
+detector — no custom training.)*
+
 > **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
 > [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
 > Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).
