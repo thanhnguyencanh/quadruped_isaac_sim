@@ -54,7 +54,7 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 ```
 
 `spot_sar_sim/spot_sar_sim/standalone/`:
-- `spot_view_scene.py` — **minimal viewer (no ROS):** boots the Isaac Sim GUI, loads the SAR environment (walled room + victim markers) and Spot (standing), and renders. The simplest way to *see* the scene and the first step-by-step bring-up check before adding ROS. GUI by default; `--headless` to drop the window.
+- `spot_view_scene.py` — **minimal viewer (no ROS):** boots the Isaac Sim GUI, loads the SAR environment and Spot (standing), and renders. The simplest way to *see* the scene and the first step-by-step bring-up check before adding ROS. GUI by default; `--headless` to drop the window; **`--floor` to view the 3-room floor + doors** (doors shown closed — opening them needs the ROS door bus in `spot_perception_app.py --floor`).
 - `spot_smoke_test.py` — fast physics-only validation (Spot walks ~2.76 m, no rendering). The go-to health check.
 - `spot_smoke_render.py` — RTX render-path validation (slow first run; for camera-sensor work later).
 - `spot_cmd_vel_app.py` — Phase 1 app: drive Spot from ROS 2 `/cmd_vel`; bridge publishes `/clock`, `/joint_states`, `/odom`, `/tf`.
@@ -109,9 +109,6 @@ image with `docker/build_docker.sh` / `docker/push_docker.sh`; see [docker/READM
 
 ## Installation (prerequisites)
 
-This machine is already provisioned (✓ = present here). The steps below document how to
-reproduce the setup on a fresh **Ubuntu 24.04** box and what each piece is for; run them in order.
-
 ```bash
 # 1. NVIDIA driver  (✓ 580)  — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor)
 nvidia-smi                                   # confirm GPU + driver are live
@@ -132,10 +129,7 @@ sudo apt install -y ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-
 # (later, only if /scan is synthesized from a 3D cloud:)
 # sudo apt install -y ros-jazzy-pointcloud-to-laserscan
 
-# 5. Miniconda  (✓ ~/miniconda3) — OPTIONAL and not used by this project. Its base env
-#    (Python 3.13) shadows ROS/Isaac, so always `conda deactivate` first (run_isaac.sh does this).
-
-# 6. Planning venv  (✓ ~/sar_planning_venv) — PDDL solving deps.
+# 5. Planning venv  (✓ ~/sar_planning_venv) — PDDL solving deps.
 #    Fast Downward compiles from source (needs cmake/g++); ENHSP is JVM-based (needs a JRE).
 sudo apt install -y python3.12-venv python3.12-dev build-essential cmake default-jre
 python3.12 -m venv --system-site-packages ~/sar_planning_venv   # --system-site-packages => rclpy importable
