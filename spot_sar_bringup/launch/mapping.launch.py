@@ -19,11 +19,12 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # run_detector:=false drops the victim detector to save memory during heavy SLAM runs.
     run_detector = LaunchConfiguration("run_detector")
+    floor = LaunchConfiguration("floor")  # floor:=true -> multi-room + doors environment
     perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "perception.launch.py"])
         ),
-        launch_arguments={"run_detector": run_detector}.items(),
+        launch_arguments={"run_detector": run_detector, "floor": floor}.items(),
     )
     slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -33,6 +34,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("run_detector", default_value="true"),
+            DeclareLaunchArgument("floor", default_value="false"),
             perception,
             slam,
         ]

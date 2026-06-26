@@ -20,10 +20,12 @@ from rclpy.action import ActionClient, ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 
 from spot_sar_msgs.action import Skill
 from spot_sar_msgs.msg import VictimArray, WorldModel
@@ -43,13 +45,20 @@ class SkillServer(Node):
         self.grid = None
         self.n_victims = 0
 
+        self._opened_doors = set()  # door ids reported open on /door_states (floor demo)
+        _latched = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
         self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
         self.create_subscription(OccupancyGrid, "/map", self._on_map, 1, callback_group=self.cb)
         self.create_subscription(VictimArray, "/victims", self._on_vic, 10, callback_group=self.cb)
+        self.create_subscription(String, "/door_states", self._on_door_state, _latched,
+                                 callback_group=self.cb)
+        self.door_cmd = self.create_publisher(String, "/door_cmd", 10)
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose", callback_group=self.cb)
         self.srv = ActionServer(self, Skill, "skill", execute_callback=self._execute,
                                 callback_group=self.cb)
-        self.get_logger().info("skill_server up: /skill {go_to_location|explore|observe|report}")
+        self.get_logger().info(
+            "skill_server up: /skill {go_to_location|explore|observe|report|open_door}")
 
     def _on_wm(self, m):
         self.wm = m
@@ -59,6 +68,28 @@ class SkillServer(Node):
 
     def _on_vic(self, m):
         self.n_victims = len(m.victims)
+
+    def _on_door_state(self, m):
+        if m.data.strip():
+            self._opened_doors.add(m.data.strip())
+
+    def _open_door(self, door_id, timeout=20.0):
+        """Publish the open command and BLOCK until /door_states confirms the door is open.
+
+        Same busy-poll pattern as _nav_to (safe under ReentrantCallbackGroup): the executor keeps
+        servicing /door_states while we wait. Idempotent: re-asserting an already-open door is fine.
+        """
+        door_id = door_id.strip()
+        if door_id in self._opened_doors:
+            return True, f"door {door_id} already open"
+        self.door_cmd.publish(String(data=door_id))
+        t0 = time.time()
+        while rclpy.ok() and time.time() - t0 < timeout:
+            if door_id in self._opened_doors:
+                return True, f"door {door_id} opened"
+            self.door_cmd.publish(String(data=door_id))  # re-assert against subscription races
+            time.sleep(0.1)
+        return False, f"door {door_id} did not open within {timeout:.0f}s"
 
     def _centroid(self, loc):
         if self.wm is None:
@@ -127,6 +158,9 @@ class SkillServer(Node):
         elif skill == "report":
             self.get_logger().info(f"*** REPORTED victim {target} ***")
             res.success, res.message = True, f"reported {target}"
+
+        elif skill == "open_door":
+            res.success, res.message = self._open_door(target)
 
         else:
             res.success, res.message = False, f"unknown skill '{skill}'"

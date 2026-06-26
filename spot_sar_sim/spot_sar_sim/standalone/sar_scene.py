@@ -103,3 +103,59 @@ def build_sar_scene(label_semantics=False):
         _label(d, "distractor")
 
     return list(VICTIM_POS)
+
+
+# ---------------------------------------------------------------- multi-room floor (door demo)
+DOOR_COLOR = (0.45, 0.30, 0.15)  # wood-ish, visually distinct from the grey walls
+
+
+def _add_static_collider(UsdPhysics, prim):
+    """Make a Cube an immovable STATIC collider (walls). Analytic Cube needs no mesh approximation;
+    no RigidBodyAPI => infinite mass / immovable, the cheapest collider for PhysX."""
+    UsdPhysics.CollisionAPI.Apply(prim)
+
+
+def _add_kinematic_collider(UsdPhysics, prim):
+    """Make a Cube a KINEMATIC collider (door slab): it collides + occludes the depth/lidar, and we
+    relocate it every frame via its xform op (kinematic teleport, not physics-driven)."""
+    UsdPhysics.CollisionAPI.Apply(prim)
+    rb = UsdPhysics.RigidBodyAPI.Apply(prim)
+    rb.CreateKinematicEnabledAttr(True)
+
+
+def build_floor_scene(label_semantics=False):
+    """Multi-room floor (sar_floor.py): perimeter + divider walls with door gaps, a sliding door
+    slab per door, and victim markers. Walls/slabs get colliders so SLAM/Nav2 see them.
+
+    Requires `sar_floor` importable (the Isaac app inserts spot_sar_planning's source dir on
+    sys.path before calling this — one source of truth shared with the grounding node + planner).
+    Returns (victim_xyz_list, door_handles) where door_handles[door_id] = {prim, closed, open}.
+    """
+    from pxr import Gf, Sdf, UsdGeom, UsdShade, UsdPhysics
+    from isaacsim.core.experimental.utils.stage import define_prim
+    import sar_floor as FLOOR
+
+    # 1. walls — static colliders
+    for name, pos, size in FLOOR.wall_segments():
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, size, WALL_COLOR)
+        _add_static_collider(UsdPhysics, p)
+
+    # 2. door slabs — kinematic colliders we lift open each frame (translate op = ordered op [0])
+    door_handles = {}
+    for d in FLOOR.DOORS:
+        closed, opened = FLOOR.door_poses(d)
+        size = FLOOR.door_slab_scale(d)
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{d.id}", closed, size, DOOR_COLOR)
+        _add_kinematic_collider(UsdPhysics, p)
+        door_handles[d.id] = {"prim": p, "closed": closed, "open": opened}
+
+    # 3. victims — orange emissive markers (the HSV detector still finds them)
+    victims = []
+    for i, (x, y, z, _room) in enumerate(FLOOR.VICTIMS):
+        p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, z), None, VICTIM_COLOR, size=0.5)
+        _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
+        if label_semantics:
+            _label(p, "victim")
+        victims.append((x, y, z))
+
+    return victims, door_handles

@@ -89,6 +89,61 @@ def problem_pddl_from_worldmodel(locations, edges, robot_location, victim_ids,
     )
 
 
+def problem_pddl_from_worldmodel_doors(rooms, doors, robot_location, victim_ids, victim_rooms,
+                                       open_door_ids=(), explored=None, found_ids=(),
+                                       problem_name="sar_floor") -> str:
+    """Build a problem.pddl for the room-graph DOORS domain (domain_doors.pddl).
+
+    rooms          : list of room ids (e.g. "room_a")
+    doors          : list of (door_id, room_a, room_b) tuples
+    robot_location : current room id of the robot ("" if unknown)
+    victim_ids     : list of int victim ids
+    victim_rooms   : list of room ids, parallel to victim_ids
+    open_door_ids  : door ids currently OPEN (door-open in init); the rest get door-closed
+    explored       : room ids flagged explored (default: all rooms — the static floor is known)
+    found_ids      : victim ids already detected (executive-tracked) -> (found v) in init
+    Goal: report every victim.
+
+    CRITICAL: door-between is emitted in BOTH room orderings (verified: a one-ordering emit makes
+    reverse traversal unsolvable).
+    """
+    if explored is None:
+        explored = list(rooms)  # rooms are known up front on the static floor
+    open_set = set(open_door_ids)
+    objs_room = " ".join(_san(r) for r in rooms) or "R_none"
+    objs_door = " ".join(_san(d[0]) for d in doors)
+    objs_vic = " ".join(f"v{i}" for i in victim_ids)
+
+    init = []
+    if robot_location:
+        init.append(f"(at {_san(robot_location)})")
+    for did, a, b in doors:
+        init.append(f"(door-between {_san(did)} {_san(a)} {_san(b)})")
+        init.append(f"(door-between {_san(did)} {_san(b)} {_san(a)})")  # both orderings (mandatory)
+        init.append(f"(door-open {_san(did)})" if did in open_set else f"(door-closed {_san(did)})")
+    for r in explored:
+        init.append(f"(explored {_san(r)})")
+    for vid, vroom in zip(victim_ids, victim_rooms):
+        init.append(f"(victim-at v{vid} {_san(vroom)})")
+    for vid in found_ids:
+        if vid in victim_ids:
+            init.append(f"(found v{vid})")
+    goal = " ".join(f"(reported v{vid})" for vid in victim_ids) or "(= 0 0)"
+
+    obj_line = f"    {objs_room} - location"
+    if objs_door:
+        obj_line += f"\n    {objs_door} - door"
+    if objs_vic:
+        obj_line += f"\n    {objs_vic} - victim"
+    return (
+        f"(define (problem {problem_name})\n"
+        f"  (:domain spot-sar-doors)\n"
+        f"  (:objects\n{obj_line})\n"
+        f"  (:init\n    " + "\n    ".join(init) + ")\n"
+        f"  (:goal (and {goal})))\n"
+    )
+
+
 def _san(loc: str) -> str:
     """PDDL identifiers can't contain '-'; cells like L_-1_2 -> L_n1_2."""
     return loc.replace("-", "n")

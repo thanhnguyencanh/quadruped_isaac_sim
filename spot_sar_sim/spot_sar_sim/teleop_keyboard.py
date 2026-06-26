@@ -45,8 +45,8 @@ class TeleopKeyboard(Node):
         super().__init__("spot_teleop_keyboard")
         self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.vx = self.vy = self.wz = 0.0
-        self.lin_speed = 0.6   # m/s   per directional key
-        self.ang_speed = 0.8   # rad/s per turn key
+        self.lin_speed = 0.2   # m/s   per directional key
+        self.ang_speed = 0.2   # rad/s per turn key
         self.timer = self.create_timer(0.05, self._publish)  # 20 Hz steady stream
 
     def _publish(self):

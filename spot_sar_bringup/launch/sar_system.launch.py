@@ -18,21 +18,23 @@ WARNING: this is the FULL heavy stack (Isaac+RTX render + slam_toolbox + Nav2). 
 memory headroom — run it on a freshly booted machine (clear swap) or it will OOM-kill nodes.
 """
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    floor = LaunchConfiguration("floor")  # floor:=true -> multi-room + openable doors
     mapping = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "mapping.launch.py"])
-        )
+        ),
+        launch_arguments={"floor": floor}.items(),
     )
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_nav"), "launch", "nav2.launch.py"])
         )
     )
-    return LaunchDescription([mapping, nav2])
+    return LaunchDescription([DeclareLaunchArgument("floor", default_value="false"), mapping, nav2])

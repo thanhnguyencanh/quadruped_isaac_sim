@@ -21,3 +21,9 @@ string robot_location                   # current symbolic location of the robot
 Victim[] victims                        # detected victims
 string[] victim_location                # parallel to victims: symbolic location of each victim
 bool[] victim_reported                  # parallel to victims: reported flag
+
+# --- doors (room-graph "floor" demo only; left EMPTY by the grid world model) ---
+string[] doors                          # door symbol ids, e.g. "door_ab"
+string[] door_room_a                    # parallel to doors: one room endpoint
+string[] door_room_b                    # parallel to doors: other room endpoint
+bool[] door_open                        # parallel to doors: is the slab currently open

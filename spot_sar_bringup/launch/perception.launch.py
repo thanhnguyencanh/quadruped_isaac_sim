@@ -33,6 +33,7 @@ HALF_PI = math.pi / 2.0
 def _launch(context, *args, **kwargs):
     repo = LaunchConfiguration("repo").perform(context)
     gui = LaunchConfiguration("gui").perform(context).lower() in ("1", "true", "yes")
+    floor = LaunchConfiguration("floor").perform(context).lower() in ("1", "true", "yes")
     domain_id = LaunchConfiguration("domain_id").perform(context)
     run_detector = LaunchConfiguration("run_detector").perform(context).lower() in ("1", "true", "yes")
 
@@ -41,6 +42,8 @@ def _launch(context, *args, **kwargs):
     cmd = [run_isaac, app]
     if gui:
         cmd.append("--gui")
+    if floor:
+        cmd.append("--floor")  # multi-room floor with openable doors
 
     actions = [
         ExecuteProcess(
@@ -89,6 +92,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("gui", default_value="false"),
+            DeclareLaunchArgument("floor", default_value="false"),
             DeclareLaunchArgument("domain_id", default_value="42"),
             DeclareLaunchArgument("repo", default_value=DEFAULT_REPO),
             DeclareLaunchArgument("run_detector", default_value="true"),

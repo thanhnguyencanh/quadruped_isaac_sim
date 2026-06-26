@@ -42,12 +42,19 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sar_scene import build_sar_scene  # shared SAR environment (walls + victims + semantics)
+from sar_scene import build_sar_scene, build_floor_scene  # shared SAR environments
+
+# sar_floor (the multi-room floor plan) lives in spot_sar_planning so the grounding node + planner
+# share it; add its source dir so build_floor_scene() can import it under Isaac's python.
+_REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+sys.path.insert(0, os.path.join(_REPO, "spot_sar_planning", "spot_sar_planning"))
 
 from isaacsim import SimulationApp
 
 parser = argparse.ArgumentParser(description="Spot RGB-D camera + ROS 2 perception app")
 parser.add_argument("--gui", action="store_true", help="show the GUI window (default headless)")
+parser.add_argument("--floor", action="store_true",
+                    help="build the multi-room floor (walls + openable doors) instead of the single room")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
@@ -81,6 +88,8 @@ simulation_app.update()
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy
+from std_msgs.msg import String
 
 import numpy as np
 import omni.graph.core as og
@@ -127,6 +136,43 @@ class CmdVelNode(Node):
         self.vx, self.vy, self.wz = msg.linear.x, msg.linear.y, msg.angular.z
 
 
+class DoorNode(Node):
+    """In-process door bus (floor demo). Subscribes /door_cmd (std_msgs/String = door id to open),
+    lifts the named slab open over ~1 s by mutating its cached translate op each frame, and
+    publishes /door_states (the door id that finished opening) on a TRANSIENT_LOCAL (latched)
+    publisher so a late-joining skill/grounding subscriber still sees it.
+
+    door_handles[id] = {prim, closed(xyz), open(xyz), op (translate XformOp), frac}.
+    """
+
+    def __init__(self, door_handles):
+        super().__init__("spot_doors")
+        self.handles = door_handles
+        self.commanded = set()
+        self._announced = set()
+        latched = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(String, "/door_cmd", self._on_cmd, 10)
+        self.state_pub = self.create_publisher(String, "/door_states", latched)
+
+    def _on_cmd(self, msg: String):
+        did = msg.data.strip()
+        if did in self.handles:
+            self.commanded.add(did)
+
+    def step(self, rate):
+        """Advance commanded slabs toward open by `rate` of the travel per frame; announce on open."""
+        for did in list(self.commanded):
+            h = self.handles[did]
+            h["frac"] = min(1.0, h["frac"] + rate)
+            cx, cy, cz = h["closed"]
+            oz = h["open"][2]
+            h["op"].Set(Gf.Vec3d(cx, cy, cz + (oz - cz) * h["frac"]))
+            if h["frac"] >= 1.0 and did not in self._announced:
+                self.state_pub.publish(String(data=did))
+                self._announced.add(did)
+                self.get_logger().info(f"door '{did}' fully open")
+
+
 # ---------------------------------------------------------------- scene + robot
 assets_root_path = get_assets_root_path()
 print(f"[perception] assets_root_path = {assets_root_path}", flush=True)
@@ -143,9 +189,18 @@ SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=[0.0, 0.0, 0.8])
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz]; mutated in place
 
-# ---- SAR environment: walled room + multiple orange victims (+ semantics) + a distractor ----
-_victims = build_sar_scene()
-print(f"[perception] SAR scene: {len(_victims)} victim(s) at {_victims}", flush=True)
+# ---- SAR environment: single walled room OR the multi-room floor with openable doors ----
+if args.floor:
+    _victims, _door_handles = build_floor_scene()
+    for _did, _h in _door_handles.items():
+        # cache the slab's translate op (ordered op [0]) so DoorNode mutates it each frame
+        _h["op"] = UsdGeom.Xformable(_h["prim"]).GetOrderedXformOps()[0]
+        _h["frac"] = 0.0
+    print(f"[perception] FLOOR scene: {len(_victims)} victim(s); doors={list(_door_handles)}", flush=True)
+else:
+    _victims = build_sar_scene()
+    _door_handles = {}
+    print(f"[perception] SAR scene: {len(_victims)} victim(s) at {_victims}", flush=True)
 
 # ---- forward-facing RGB-D camera, child of the body so it tracks the chassis ----
 cam_prim = define_prim(CAMERA_PRIM, "Camera")
@@ -285,17 +340,22 @@ SimulationManager.register_callback(on_physics_step, IsaacEvents.POST_PHYSICS_ST
 simulation_app.update()
 
 cmd_node = CmdVelNode()  # rclpy already initialized before the graphs
+door_node = DoorNode(_door_handles) if args.floor else None  # door bus (floor demo only)
+DOOR_RATE = 0.02  # fraction of slab travel per loop tick (~1-2 s to fully open)
 
 print(
     "[perception] publishing /clock /joint_states /odom /tf "
     "+ /camera/rgb/image_raw /camera/depth/image_raw /camera/rgb/camera_info; "
-    "subscribing /cmd_vel (rclpy)",
+    "subscribing /cmd_vel" + ("; doors on /door_cmd -> /door_states" if door_node else "") + " (rclpy)",
     flush=True,
 )
 frame = 0
 while simulation_app.is_running():
     simulation_app.update()
     rclpy.spin_once(cmd_node, timeout_sec=0.0)
+    if door_node is not None:
+        rclpy.spin_once(door_node, timeout_sec=0.0)
+        door_node.step(DOOR_RATE)
     if not SimulationManager.is_simulating():
         continue
 
@@ -313,6 +373,8 @@ while simulation_app.is_running():
         break
 
 cmd_node.destroy_node()
+if door_node is not None:
+    door_node.destroy_node()
 rclpy.shutdown()
 simulation_app.close()
 print("[perception] done.", flush=True)

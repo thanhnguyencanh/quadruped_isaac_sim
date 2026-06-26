@@ -36,11 +36,22 @@ from rclpy.node import Node
 from spot_sar_msgs.action import Skill
 from spot_sar_msgs.msg import WorldModel
 
-from spot_sar_planning.planner import default_pddl_dir, problem_pddl_from_worldmodel, solve
+from spot_sar_planning.planner import (default_pddl_dir, problem_pddl_from_worldmodel,
+                                        problem_pddl_from_worldmodel_doors, solve)
 
 # PDDL action name -> (skill name, which arg is the target: 'loc-last' | 'victim-first' | None)
+# GRID profile (the original cell-grid mission, domain.pddl):
 ACTION_TO_SKILL = {
     "move": ("go_to_location", "loc-last"),
+    "explore": ("observe", None),
+    "detect": ("observe", None),
+    "report": ("report", "victim-first"),
+}
+# DOORS profile (room-graph floor demo, domain_doors.pddl). `move` is move(from,to,door) so the
+# nav destination is the 2nd-from-last arg; open-door's target is the door id (first arg).
+ACTION_TO_SKILL_DOORS = {
+    "move": ("go_to_location", "loc-second-last"),
+    "open-door": ("open_door", "door-first"),
     "explore": ("observe", None),
     "detect": ("observe", None),
     "report": ("report", "victim-first"),
@@ -66,9 +77,16 @@ class TaskExecutive(Node):
         self.declare_parameter("planner_frame", "map")
         self.declare_parameter("cycle_period", 3.0)
         self.declare_parameter("dry_run", False)
+        self.declare_parameter("domain_profile", "grid")  # "grid" (cell mission) | "doors" (floor demo)
         self.frame = self.get_parameter("planner_frame").value
         self.dry_run = bool(self.get_parameter("dry_run").value)
-        self.domain = os.path.join(default_pddl_dir(), "domain.pddl")
+        self.profile = self.get_parameter("domain_profile").value
+        if self.profile == "doors":
+            self.domain = os.path.join(default_pddl_dir(), "domain_doors.pddl")
+            self.action_to_skill = ACTION_TO_SKILL_DOORS
+        else:
+            self.domain = os.path.join(default_pddl_dir(), "domain.pddl")
+            self.action_to_skill = ACTION_TO_SKILL
 
         self.wm = None
         self.found = set()         # victim ids whose `detect` succeeded (executive-tracked state)
@@ -82,7 +100,8 @@ class TaskExecutive(Node):
         self.skill = ActionClient(self, Skill, "skill", callback_group=self.cb)
         self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
         self.create_timer(float(self.get_parameter("cycle_period").value), self._cycle, callback_group=self.cb)
-        self.get_logger().info(f"task_executive up (dry_run={self.dry_run}); domain={self.domain}")
+        self.get_logger().info(
+            f"task_executive up (dry_run={self.dry_run}, profile={self.profile}); domain={self.domain}")
 
     def _on_wm(self, msg: WorldModel):
         self.wm = msg
@@ -104,10 +123,17 @@ class TaskExecutive(Node):
                                    throttle_duration_sec=10.0)
             return
         vlocs = [loc_by_id[i] for i in vids]
-        edges = list(zip(self.wm.connected_a, self.wm.connected_b))
         found_here = [v for v in vids if v in self.found]
-        prob = problem_pddl_from_worldmodel(self.wm.locations, edges, self.wm.robot_location,
-                                            vids, vlocs, self.wm.explored, found_ids=found_here)
+        if self.profile == "doors":
+            doors = list(zip(self.wm.doors, self.wm.door_room_a, self.wm.door_room_b))
+            open_ids = [d for d, o in zip(self.wm.doors, self.wm.door_open) if o]
+            prob = problem_pddl_from_worldmodel_doors(
+                list(self.wm.locations), doors, self.wm.robot_location, vids, vlocs,
+                open_door_ids=open_ids, explored=list(self.wm.explored), found_ids=found_here)
+        else:
+            edges = list(zip(self.wm.connected_a, self.wm.connected_b))
+            prob = problem_pddl_from_worldmodel(self.wm.locations, edges, self.wm.robot_location,
+                                                vids, vlocs, self.wm.explored, found_ids=found_here)
         pf = os.path.join(tempfile.gettempdir(), "sar_problem.pddl")
         with open(pf, "w") as fh:
             fh.write(prob)
@@ -128,19 +154,22 @@ class TaskExecutive(Node):
     def _dispatch(self, action):
         name, args = parse_action(action)
         loc_map = {_san(l).lower(): l for l in self.wm.locations}
-        mapping = ACTION_TO_SKILL.get(name)
+        mapping = self.action_to_skill.get(name)
         if mapping is None:
             self.get_logger().warn(f"no skill mapping for action {name}")
             return
         skill_name, targ_kind = mapping
         target = ""
-        if targ_kind == "loc-last":
-            target = loc_map.get(args[-1], args[-1])
+        if targ_kind in ("loc-last", "loc-second-last"):
+            arg = args[-1] if targ_kind == "loc-last" else args[-2]
+            target = loc_map.get(arg, arg)
             if self._centroid(target) is None:
                 self.get_logger().warn(f"no centroid for {target}; skipping")
                 return
         elif targ_kind == "victim-first":
             target = args[0].lstrip("vV")
+        elif targ_kind == "door-first":
+            target = args[0]  # door id, published verbatim to /door_cmd by the open_door skill
 
         self.last_dispatched = (name, args)
         if self.dry_run:
