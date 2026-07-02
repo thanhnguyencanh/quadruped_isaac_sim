@@ -36,7 +36,9 @@ from rclpy.node import Node
 from spot_sar_msgs.action import Skill
 from spot_sar_msgs.msg import WorldModel
 
+from spot_sar_planning import sar_building
 from spot_sar_planning.planner import (default_pddl_dir, problem_pddl_from_worldmodel,
+                                        problem_pddl_from_worldmodel_building,
                                         problem_pddl_from_worldmodel_doors, solve)
 
 # PDDL action name -> (skill name, which arg is the target: 'loc-last' | 'victim-first' | None)
@@ -55,6 +57,13 @@ ACTION_TO_SKILL_DOORS = {
     "explore": ("observe", None),
     "detect": ("observe", None),
     "report": ("report", "victim-first"),
+}
+# BUILDING profile (two-floor building, domain_building.pddl): doors gate intra-floor moves + a
+# stair changes floors. use-stairs(?s ?from ?to) -> climb_stairs("<stair_id> up|down"); direction is
+# computed from the destination landing's floor ('stair-dir').
+ACTION_TO_SKILL_BUILDING = {
+    **ACTION_TO_SKILL_DOORS,
+    "use-stairs": ("climb_stairs", "stair-dir"),
 }
 MAX_ACTION_FAILS = 3
 
@@ -77,11 +86,15 @@ class TaskExecutive(Node):
         self.declare_parameter("planner_frame", "map")
         self.declare_parameter("cycle_period", 3.0)
         self.declare_parameter("dry_run", False)
-        self.declare_parameter("domain_profile", "grid")  # "grid" (cell mission) | "doors" (floor demo)
+        # "grid" (cell mission) | "doors" (floor demo) | "building" (two-floor stairs demo)
+        self.declare_parameter("domain_profile", "grid")
         self.frame = self.get_parameter("planner_frame").value
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.profile = self.get_parameter("domain_profile").value
-        if self.profile == "doors":
+        if self.profile == "building":
+            self.domain = os.path.join(default_pddl_dir(), "domain_building.pddl")
+            self.action_to_skill = ACTION_TO_SKILL_BUILDING
+        elif self.profile == "doors":
             self.domain = os.path.join(default_pddl_dir(), "domain_doors.pddl")
             self.action_to_skill = ACTION_TO_SKILL_DOORS
         else:
@@ -124,7 +137,14 @@ class TaskExecutive(Node):
             return
         vlocs = [loc_by_id[i] for i in vids]
         found_here = [v for v in vids if v in self.found]
-        if self.profile == "doors":
+        if self.profile == "building":
+            doors = list(zip(self.wm.doors, self.wm.door_room_a, self.wm.door_room_b))
+            open_ids = [d for d, o in zip(self.wm.doors, self.wm.door_open) if o]
+            stairs = [(s.id, s.room_a, s.room_b) for s in sar_building.STAIRS]  # static topology
+            prob = problem_pddl_from_worldmodel_building(
+                list(self.wm.locations), doors, self.wm.robot_location, vids, vlocs, stairs,
+                open_door_ids=open_ids, explored=list(self.wm.explored), found_ids=found_here)
+        elif self.profile == "doors":
             doors = list(zip(self.wm.doors, self.wm.door_room_a, self.wm.door_room_b))
             open_ids = [d for d, o in zip(self.wm.doors, self.wm.door_open) if o]
             prob = problem_pddl_from_worldmodel_doors(
@@ -170,6 +190,11 @@ class TaskExecutive(Node):
             target = args[0].lstrip("vV")
         elif targ_kind == "door-first":
             target = args[0]  # door id, published verbatim to /door_cmd by the open_door skill
+        elif targ_kind == "stair-dir":
+            # use-stairs(?s ?from ?to): climb_stairs target = "<stair_id> up|down" (up if ?to on f2)
+            stair_id, _to = args[0], args[-1]
+            direction = "up" if sar_building.floor_of(_to) == "f2" else "down"
+            target = f"{stair_id} {direction}"
 
         self.last_dispatched = (name, args)
         if self.dry_run:

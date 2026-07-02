@@ -269,6 +269,88 @@ doors-profile planning, the slab physically opening on `/door_cmd`, and the grou
 live door state. *(Phase 2, planned: swap the HSV detector for a pretrained YOLO person/object
 detector — no custom training.)*
 
+## Two-floor building with a stairwell (PDDL `use-stairs`)
+
+The third environment: a **two-storey building** — three rooms per floor, victims on **both floors**,
+joined by a **stairwell**. The planner must dispatch a **`use-stairs`** action (the floor analogue of
+`open-door`) to change levels. Another **opt-in parallel path**; the single-room and floor missions
+are unchanged.
+
+**The design in one idea — "the door pattern, applied vertically."** Spot's `SpotFlatTerrainPolicy`
+is trained on flat ground and *cannot* climb real steps, and slam_toolbox keeps a single 2D map that a
+vertically-stacked building would corrupt. So:
+
+- **Floors are x-offset** (`f1` rooms at x∈[-9, 9], `f2` rooms at x∈[15, 33]) → their footprints are
+  **disjoint in the one 2D map**, no per-floor maps or map-switching needed. Nav2's rolling,
+  scan-driven costmap serves both wings unchanged.
+- **…except the stair landing**, which is **vertically stacked**: `f1_stair` and `f2_stair` share the
+  exact same `(x,y)=(10.5, 0)`, differing only in z (0.0 vs 3.0). So the floor change is a **pure-z
+  teleport** `(10.5,0,0.8)↔(10.5,0,3.8)`: odom x,y stay constant while z jumps ±3 m, so slam's
+  **planar `map→odom` sees ~no discontinuity** (verified: odom `x:0.12, y:-0.02, z:2.68` after a climb).
+  A real staircase is rendered at the landing for the camera / YOLO / 3D-mapping; **Spot never drives
+  onto it** — the teleport does the level change.
+
+Run the **full closed loop**: `ros2 launch spot_sar_bringup building_mission.launch.py` — the executive
+plans `open-door` (floor 1) → reaches + reports the floor-1 victim → `move` to the landing →
+`use-stairs` → **StairsNode teleports Spot up** → grounds on floor 2 → traverses → reports the
+floor-2 victim. To drive/inspect by hand, run the app with `--building` and command the stairs on
+`/stairs_cmd` (`--spawn 10.5 0 0.8` starts Spot on the landing):
+
+```bash
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --building --spawn 10.5 0 0.8   # +--gui to watch
+ros2 topic pub --once /stairs_cmd std_msgs/msg/String '{data: "stair_main up"}'    # teleport to floor 2
+ros2 topic pub --once /stairs_cmd std_msgs/msg/String '{data: "stair_main down"}'  # back to floor 1
+ros2 topic echo /floor_state   # "f1" | "f2" once Spot arrives (latched)
+```
+
+How it fits together (single source of truth: `spot_sar_planning/spot_sar_planning/sar_building.py` —
+rooms tagged by floor, portals, stairs, `room_of(x, y, floor)`):
+
+| Layer | What it does |
+|---|---|
+| **Scene** | `sar_scene.build_two_floor_scene()` — two x-offset floor plates + per-floor walls + floor-1 doors + a decorative staircase + humans on both floors |
+| **Stair bus** | the `--building` app hosts a `StairsNode` (the `DoorNode` of floors): `/stairs_cmd` (`"<id> up/down"`) pure-z-teleports Spot at the stacked landing; `/floor_state` (`"f1"/"f2"`, latched) announces the floor |
+| **PDDL** | `domain_building.pddl` — a `stair` is the ONLY edge between the (x-disjoint) wings, so STRIPS is **forced to `use-stairs`** to reach floor 2 (verified with Fast Downward) |
+| **Grounding** | `building_world_model_node` — room graph across both floors; the floor comes from the latched `/floor_state` (the two landings share `(x,y)`, so it is the authoritative tie-break) |
+| **Executive / skill** | run with `domain_profile:=building`; dispatches the **`climb_stairs`** skill, which publishes `/stairs_cmd` and blocks until `/floor_state` confirms |
+
+Verified component-by-component (feasibility-gated before the heavy run): PDDL solves the full
+two-floor mission (`open-door` + `use-stairs` + reports both floors); the **teleport keeps odom x,y
+constant while z jumps ±3 m** and Spot stands stably on floor 2; and the executive's building profile
+dispatches `climb_stairs("stair_main up")`.
+
+## 3D mapping — OctoMap voxels + elevation map for the stairs
+
+The 2D SLAM map is complemented by two **3D** maps, run *alongside* a live sim (they consume the
+RGB-D camera). Both are in `mapping3d.launch.py`; the shared input is a camera **point cloud**
+(`depth_image_proc` → `/camera/points`, already installed):
+
+| Map | Node | Output | RViz |
+|---|---|---|---|
+| **3D voxel (OctoMap)** | `octomap_server` (apt) | `/octomap_full` + `/octomap_point_cloud_centers` + projected `/projected_map` | voxel boxes coloured by height — the two floors show up at z≈0 and z≈3 |
+| **3D elevation (stairs)** | leggedrobotics `elevation_mapping_cupy` (GPU/CuPy) | `/elevation_mapping_node/elevation_map` (`grid_map_msgs/GridMap`) | `grid_map_rviz_plugin` renders the `elevation` layer as a 3D surface — the steps as a height field |
+
+```bash
+# one-time install (needs sudo + internet):
+./scripts/setup_3d_mapping.sh octomap      # stage A: OctoMap + grid_map (apt) — GPU-free, low risk
+./scripts/setup_3d_mapping.sh elevation    # stage B: elevation_mapping_cupy (source build + CuPy)
+
+# then, with a --building sim running (e.g. building_mission.launch.py or perception.launch.py building:=true):
+ros2 launch spot_sar_bringup mapping3d.launch.py                     # point cloud + OctoMap
+ros2 launch spot_sar_bringup mapping3d.launch.py elevation:=true     # + elevation_mapping_cupy
+ros2 launch spot_sar_bringup rviz.launch.py rviz_config:=$(ros2 pkg prefix spot_sar_bringup)/share/spot_sar_bringup/rviz/sar_3d.rviz
+```
+
+- **OctoMap** is the reliable, GPU-free 3D map — apt install and go. Point Spot's camera around and the
+  octree fills in; the two storeys appear as separate voxel bands (the pure-z teleport keeps odom
+  coherent, so the octree stays consistent across floors).
+- **elevation_mapping_cupy** is the faithful leggedrobotics stack for the stairs, but it is a ROS 2
+  **dev-branch source build** + **CuPy on the GPU**. It shares the **8 GB VRAM with the Isaac RTX
+  renderer** → real OOM risk; if it won't co-run, keep OctoMap (which already captures the stairs as
+  voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
+  a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
+
 > **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
 > [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
 > Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).

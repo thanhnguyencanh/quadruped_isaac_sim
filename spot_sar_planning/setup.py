@@ -30,6 +30,7 @@ setup(
         'console_scripts': [
             'world_model_node = spot_sar_planning.world_model_node:main',
             'floor_world_model_node = spot_sar_planning.floor_world_model_node:main',
+            'building_world_model_node = spot_sar_planning.building_world_model_node:main',
         ],
     },
 )

@@ -42,7 +42,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sar_scene import build_sar_scene, build_floor_scene  # shared SAR environments
+from sar_scene import build_sar_scene, build_floor_scene, build_two_floor_scene  # shared SAR environments
 
 # sar_floor (the multi-room floor plan) lives in spot_sar_planning so the grounding node + planner
 # share it; add its source dir so build_floor_scene() can import it under Isaac's python.
@@ -55,9 +55,13 @@ parser = argparse.ArgumentParser(description="Spot RGB-D camera + ROS 2 percepti
 parser.add_argument("--gui", action="store_true", help="show the GUI window (default headless)")
 parser.add_argument("--floor", action="store_true",
                     help="build the multi-room floor (walls + openable doors) instead of the single room")
+parser.add_argument("--building", action="store_true",
+                    help="build the TWO-FLOOR building (x-offset wings + stacked stair landing + stairs)")
 parser.add_argument("--no-humans", dest="humans", action="store_false",
                     help="use orange box victims (HSV detector) instead of human figures (YOLO)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
+parser.add_argument("--spawn", nargs=3, type=float, default=None, metavar=("X", "Y", "Z"),
+                    help="override Spot's spawn position (e.g. --spawn 10.5 0 0.8 to start on the stair landing)")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
 
@@ -186,6 +190,86 @@ class DoorNode(Node):
                 self.get_logger().info(f"door '{did}' fully {state}")
 
 
+class StairsNode(Node):
+    """In-app STAIR bus (two-floor building) — the DoorNode of floors. On /stairs_cmd it performs a
+    (near) PURE-Z teleport of Spot's articulation between the two vertically-STACKED landings: x,y are
+    lerped only from Spot's current pose to the shared landing centroid (a <=0.25 m nudge, since Nav2
+    stops within tolerance) while z travels 0.8<->3.8. Because x,y,yaw barely change, slam_toolbox's
+    planar map->odom sees ~no discontinuity — the 3 m z jump is invisible to the 2D map. Then it
+    latches the new floor on /floor_state (the authoritative floor flag the grounding node trusts).
+
+    /stairs_cmd  payload: "<stair_id> up" | "<stair_id> down"
+    /floor_state payload: "f1" | "f2"  (latched TRANSIENT_LOCAL; seeded "f1")
+    """
+
+    def __init__(self, spot, stair_info):
+        super().__init__("spot_stairs")
+        self.spot = spot
+        self.lx, self.ly = stair_info["landing_xy"]
+        self.z_bottom, self.z_top = stair_info["z_bottom"], stair_info["z_top"]
+        self.fx0, self.fx1, self.fy0, self.fy1 = stair_info["footprint"]
+        self.cur = stair_info["floor_bottom"]   # "f1"
+        self.lerp = None                          # active teleport state, or None
+        self.orient = [1.0, 0.0, 0.0, 0.0]
+        # depth=1 so a late-joining subscriber (grounding node) gets ONLY the CURRENT floor, not the
+        # replayed seed (a deeper transient-local history would replay "f1" then "f2").
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(String, "/stairs_cmd", self._on_cmd, 10)
+        self.state_pub = self.create_publisher(String, "/floor_state", latched)
+        self.state_pub.publish(String(data=self.cur))  # seed the current floor (latched)
+
+    def _base_pose(self):
+        pos, q = self.spot.robot.get_world_poses()
+        p = wp.to_torch(pos).cpu().numpy().reshape(-1)[:3]
+        o = wp.to_torch(q).cpu().numpy().reshape(-1)[:4]
+        return p, o
+
+    def is_teleporting(self):
+        return self.lerp is not None
+
+    def _on_cmd(self, msg: String):
+        parts = msg.data.split()
+        if not parts:
+            return
+        direction = parts[1].strip().lower() if len(parts) > 1 else "up"
+        target = "f2" if direction == "up" else "f1"
+        if self.lerp is not None or target == self.cur:
+            self.state_pub.publish(String(data=self.cur))  # idempotent (re)announce
+            return
+        p, o = self._base_pose()
+        x, y = float(p[0]), float(p[1])
+        if not (self.fx0 <= x <= self.fx1 and self.fy0 <= y <= self.fy1):
+            self.get_logger().warn(
+                f"/stairs_cmd '{direction}' ignored: Spot at ({x:.2f},{y:.2f}) is not on the landing "
+                f"[{self.fx0},{self.fx1}]x[{self.fy0},{self.fy1}]")
+            return
+        self.orient = [float(v) for v in o]      # hold yaw constant across the teleport
+        z1 = self.z_top if target == "f2" else self.z_bottom
+        self.lerp = {"x0": x, "y0": y, "z0": float(p[2]), "z1": z1, "i": 0, "N": 30, "target": target}
+        self.get_logger().info(f"stairs: teleport {self.cur}->{target} (z {p[2]:.2f}->{z1:.2f}), "
+                               f"x,y held ~({x:.2f},{y:.2f})->({self.lx},{self.ly})")
+
+    def step(self):
+        """Advance the pure-z teleport by one loop tick (~1.2 s over N frames). x,y ease to the shared
+        landing centroid; z travels between floors; velocities zeroed so the flat policy holds still."""
+        if self.lerp is None:
+            return
+        L = self.lerp
+        L["i"] += 1
+        frac = min(1.0, L["i"] / L["N"])
+        xx = L["x0"] + (self.lx - L["x0"]) * frac
+        yy = L["y0"] + (self.ly - L["y0"]) * frac
+        zz = L["z0"] + (L["z1"] - L["z0"]) * frac
+        self.spot.robot.set_world_poses(positions=[[xx, yy, zz]], orientations=[self.orient])
+        self.spot.robot.set_velocities(linear_velocities=[[0.0, 0.0, 0.0]],
+                                       angular_velocities=[[0.0, 0.0, 0.0]])
+        if L["i"] >= L["N"]:
+            self.cur = L["target"]
+            self.lerp = None
+            self.state_pub.publish(String(data=self.cur))
+            self.get_logger().info(f"stairs: arrived on {self.cur}")
+
+
 # ---------------------------------------------------------------- scene + robot
 assets_root_path = get_assets_root_path()
 print(f"[perception] assets_root_path = {assets_root_path}", flush=True)
@@ -199,22 +283,32 @@ RenderingManager.set_dt(8.0 / PHYSICS_HZ)  # ~25 Hz render (caps GPU load for 8 
 SimulationManager.set_physics_sim_device(args.device)
 SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 
-spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=[0.0, 0.0, 0.8])
+_spawn = list(args.spawn) if args.spawn else [0.0, 0.0, 0.8]
+spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=_spawn)
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz]; mutated in place
 
-# ---- SAR environment: single walled room OR the multi-room floor with openable doors ----
-if args.floor:
+# ---- SAR environment: single room | multi-room floor (doors) | two-floor building (stairs) ----
+_stair_info = None
+if args.building:
+    _victims, _door_handles, _stair_info = build_two_floor_scene(
+        humans=args.humans, assets_root_path=assets_root_path)
+    print(f"[perception] BUILDING scene: {len(_victims)} victim(s) (humans={args.humans}); "
+          f"doors={list(_door_handles)}; stair={_stair_info['stair_id']} "
+          f"landing={_stair_info['landing_xy']} z {_stair_info['z_bottom']}<->{_stair_info['z_top']}",
+          flush=True)
+elif args.floor:
     _victims, _door_handles = build_floor_scene(humans=args.humans, assets_root_path=assets_root_path)
-    for _did, _h in _door_handles.items():
-        # cache the slab's translate op (ordered op [0]) so DoorNode mutates it each frame
-        _h["op"] = UsdGeom.Xformable(_h["prim"]).GetOrderedXformOps()[0]
-        _h["frac"] = 0.0
     print(f"[perception] FLOOR scene: {len(_victims)} victim(s) (humans={args.humans}); "
           f"doors={list(_door_handles)}", flush=True)
 else:
     _victims = build_sar_scene(humans=args.humans, assets_root_path=assets_root_path)
     _door_handles = {}
     print(f"[perception] SAR scene: {len(_victims)} victim(s) (humans={args.humans}) at {_victims}", flush=True)
+
+for _did, _h in _door_handles.items():
+    # cache the slab's translate op (ordered op [0]) so DoorNode mutates it each frame
+    _h["op"] = UsdGeom.Xformable(_h["prim"]).GetOrderedXformOps()[0]
+    _h["frac"] = 0.0
 
 # ---- forward-facing RGB-D camera, child of the body so it tracks the chassis ----
 cam_prim = define_prim(CAMERA_PRIM, "Camera")
@@ -354,13 +448,15 @@ SimulationManager.register_callback(on_physics_step, IsaacEvents.POST_PHYSICS_ST
 simulation_app.update()
 
 cmd_node = CmdVelNode()  # rclpy already initialized before the graphs
-door_node = DoorNode(_door_handles) if args.floor else None  # door bus (floor demo only)
+door_node = DoorNode(_door_handles) if _door_handles else None  # door bus (floor + building demos)
+stair_node = StairsNode(spot, _stair_info) if _stair_info else None  # stair bus (building only)
 DOOR_RATE = 0.02  # fraction of slab travel per loop tick (~1-2 s to fully open)
 
 print(
     "[perception] publishing /clock /joint_states /odom /tf "
     "+ /camera/rgb/image_raw /camera/depth/image_raw /camera/rgb/camera_info; "
-    "subscribing /cmd_vel" + ("; doors on /door_cmd -> /door_states" if door_node else "") + " (rclpy)",
+    "subscribing /cmd_vel" + ("; doors on /door_cmd -> /door_states" if door_node else "")
+    + ("; stairs on /stairs_cmd -> /floor_state" if stair_node else "") + " (rclpy)",
     flush=True,
 )
 frame = 0
@@ -370,12 +466,18 @@ while simulation_app.is_running():
     if door_node is not None:
         rclpy.spin_once(door_node, timeout_sec=0.0)
         door_node.step(DOOR_RATE)
+    if stair_node is not None:
+        rclpy.spin_once(stair_node, timeout_sec=0.0)
+        stair_node.step()
     if not SimulationManager.is_simulating():
         continue
 
-    base_command[0] = float(np.clip(cmd_node.vx, -VX_LIM, VX_LIM))
-    base_command[1] = float(np.clip(cmd_node.vy, -VY_LIM, VY_LIM))
-    base_command[2] = float(np.clip(cmd_node.wz, -WZ_LIM, WZ_LIM))
+    if stair_node is not None and stair_node.is_teleporting():
+        base_command[:] = 0.0  # hold Spot still while it is repositioned between floors (pure-z teleport)
+    else:
+        base_command[0] = float(np.clip(cmd_node.vx, -VX_LIM, VX_LIM))
+        base_command[1] = float(np.clip(cmd_node.vy, -VY_LIM, VY_LIM))
+        base_command[2] = float(np.clip(cmd_node.wz, -WZ_LIM, WZ_LIM))
 
     if frame % 100 == 0:
         bc = base_command.cpu().numpy() if hasattr(base_command, "cpu") else np.asarray(base_command)
@@ -389,6 +491,8 @@ while simulation_app.is_running():
 cmd_node.destroy_node()
 if door_node is not None:
     door_node.destroy_node()
+if stair_node is not None:
+    stair_node.destroy_node()
 rclpy.shutdown()
 simulation_app.close()
 print("[perception] done.", flush=True)

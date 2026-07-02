@@ -1,0 +1,35 @@
+# elevation_mapping_cupy setup for the Spot two-floor building — overlays the package's core_param.yaml.
+# Consumes the camera point cloud from mapping3d.launch.py (depth_image_proc -> /camera/points) and
+# publishes a robot-centric 2.5D height GridMap for the stairs. Frames: odom is always available (the
+# Isaac odom graph); use map when SLAM is up. Tune map_length/resolution against 8 GB VRAM.
+/elevation_mapping_node:
+  ros__parameters:
+    # --- frames ---
+    map_frame: "odom"            # persistent frame the height map is expressed in (odom | map)
+    base_frame: "base_link"      # robot body frame (the map is centred on this)
+    corrected_map_frame: "odom"
+
+    # --- one pointcloud input (the depth-derived cloud from mapping3d) ---
+    subscribers:
+      depth:
+        topic_name: "/camera/points"
+        data_type: "pointcloud"
+
+    # --- output: the elevation GridMap for RViz (grid_map_rviz_plugin renders 'elevation' as 3D) ---
+    publishers:
+      elevation_map:
+        layers: ["elevation", "variance", "traversability"]
+        basic_layers: ["elevation"]
+        fps: 5.0
+
+    # --- robot-centric map geometry (keep modest for 8 GB VRAM alongside Isaac) ---
+    resolution: 0.06             # cell size (m) — fine enough to resolve 0.25 m stair steps
+    map_length_x: 10.0           # covers the stairwell + landing in front of the robot
+    map_length_y: 10.0
+
+    # --- fusion / noise (defaults suit an RGB-D depth cloud) ---
+    sensor_noise_factor: 0.05
+    mahalanobis_thresh: 2.0
+    outlier_variance: 0.01
+    enable_edge_sharpen: true
+    enable_visibility_cleanup: true

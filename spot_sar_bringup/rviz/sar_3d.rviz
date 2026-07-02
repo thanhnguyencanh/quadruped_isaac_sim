@@ -1,0 +1,211 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset: {X: 0, Y: 0, Z: 0}
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.6
+      Name: TF
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+    # ---- 3D VOXEL MAP: OctoMap occupied-cell centres as boxes (no plugin needed; two floors show up
+    #      at z~0 and z~3, coloured by height). This is the reliable 3D-voxel view. ----
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 5, Min Value: 0, Value: true}
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: OctoMap voxels (/octomap_point_cloud_centers)
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.1
+      Style: Boxes
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /octomap_point_cloud_centers
+      Use rainbow: true
+      Value: true
+    # ---- OctoMap true voxel grid (needs ros-jazzy-octomap-rviz-plugins). Disabled by default. ----
+    - Class: octomap_rviz_plugins/OccupancyGrid
+      Enabled: false
+      Name: OctoMap OccupancyGrid (/octomap_full)
+      Max. Height Display: 6
+      Min. Height Display: -0.5
+      Octomap Binary Topic: /octomap_full
+      Voxel Coloring: Cell Probability
+      Voxel Rendering: Occupied Voxels
+      Value: false
+    # ---- 3D ELEVATION MAP for the stairs (needs grid_map_rviz_plugin + elevation_mapping_cupy). ----
+    - Class: grid_map_rviz_plugin/GridMap
+      Enabled: true
+      Name: Elevation (/elevation_mapping_node/elevation_map)
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /elevation_mapping_node/elevation_map
+      Show Grid Lines: false
+      Height Layer: elevation
+      Height Transformer: GridMapLayer
+      Color Layer: elevation
+      Color Transformer: GridMapLayer
+      Use Rainbow: true
+      Invert Rainbow: false
+      Alpha: 1
+      Value: true
+    # ---- raw camera cloud (off by default; the octomap already summarizes it) ----
+    - Alpha: 1
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 200; 200; 200
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: false
+      Name: Camera Cloud (/camera/points)
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.01
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/points
+      Use rainbow: true
+      Value: false
+    - Alpha: 1
+      Class: rviz_default_plugins/LaserScan
+      Color: 0; 255; 0
+      Color Transformer: FlatColor
+      Enabled: true
+      Name: LaserScan (/scan)
+      Size (m): 0.02
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan
+      Use Fixed Frame: true
+      Value: true
+    - Alpha: 0.7
+      Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+      Name: Map (/map)
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Victims (/victims/markers)
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /victims/markers
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Detections (/camera/rgb/detections)
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/rgb/detections
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 26
+      Focal Point: {X: 12, Y: 0, Z: 1.5}
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.55
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 2.9
+    Saved: ~
+Window Geometry:
+  Detections (/camera/rgb/detections):
+    collapsed: false
+  Displays:
+    collapsed: false
+  Height: 942
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Width: 1808
+  X: 66
+  Y: 32

@@ -25,7 +25,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sar_scene import build_sar_scene, build_floor_scene  # shared SAR environments
+from sar_scene import build_sar_scene, build_floor_scene, build_two_floor_scene  # shared SAR environments
 
 # sar_floor (the multi-room floor plan) lives in spot_sar_planning; add its dir for build_floor_scene()
 _REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
@@ -37,6 +37,8 @@ parser = argparse.ArgumentParser(description="Minimal Isaac Sim viewer: SAR env 
 parser.add_argument("--headless", action="store_true", help="run without the GUI window")
 parser.add_argument("--floor", action="store_true",
                     help="show the multi-room floor (walls + doors) instead of the single room")
+parser.add_argument("--building", action="store_true",
+                    help="show the TWO-FLOOR building (x-offset wings + stacked stair landing + stairs)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
@@ -93,8 +95,14 @@ SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=[0.0, 0.0, 0.8])
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz] — held at zero = stand still
 
-# ---- environment: single walled room OR the multi-room floor with (closed) doors ----
-if args.floor:
+# ---- environment: single room | multi-room floor (doors) | two-floor building (stairs) ----
+if args.building:
+    _victims, _doors, _stair = build_two_floor_scene()
+    print(f"[view] BUILDING scene: {len(_victims)} victim(s); doors={list(_doors)}; "
+          f"stair={_stair['stair_id']} landing={_stair['landing_xy']} "
+          f"(static viewer — no ROS to open doors or run the stair teleport; use --building in "
+          f"spot_perception_app.py for that)", flush=True)
+elif args.floor:
     _victims, _doors = build_floor_scene()
     print(f"[view] FLOOR scene: {len(_victims)} victim(s); doors={list(_doors)} "
           f"(closed — no ROS in this viewer to open them; use --floor in spot_perception_app.py for that)",

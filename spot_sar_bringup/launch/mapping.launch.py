@@ -20,13 +20,14 @@ def generate_launch_description():
     # run_detector:=false drops the victim detector to save memory during heavy SLAM runs.
     run_detector = LaunchConfiguration("run_detector")
     floor = LaunchConfiguration("floor")          # floor:=true -> multi-room + doors environment
+    building = LaunchConfiguration("building")    # building:=true -> two-floor building (stairs)
     humans = LaunchConfiguration("humans")        # humans:=false -> orange box victims
     detector = LaunchConfiguration("detector")    # yolo | hsv
     perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "perception.launch.py"])
         ),
-        launch_arguments={"run_detector": run_detector, "floor": floor,
+        launch_arguments={"run_detector": run_detector, "floor": floor, "building": building,
                           "humans": humans, "detector": detector}.items(),
     )
     slam = IncludeLaunchDescription(
@@ -38,6 +39,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("run_detector", default_value="true"),
             DeclareLaunchArgument("floor", default_value="false"),
+            DeclareLaunchArgument("building", default_value="false"),
             DeclareLaunchArgument("humans", default_value="true"),
             DeclareLaunchArgument("detector", default_value="yolo"),
             perception,

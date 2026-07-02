@@ -144,6 +144,71 @@ def problem_pddl_from_worldmodel_doors(rooms, doors, robot_location, victim_ids,
     )
 
 
+def problem_pddl_from_worldmodel_building(rooms, doors, robot_location, victim_ids, victim_rooms,
+                                          stairs, open_door_ids=(), explored=None, found_ids=(),
+                                          problem_name="sar_building") -> str:
+    """Build a problem.pddl for the TWO-FLOOR building domain (domain_building.pddl).
+
+    Superset of problem_pddl_from_worldmodel_doors: same room-graph + door gating PLUS a STAIR type
+    linking the two floor landings. The stair is the only edge between the (x-disjoint) floor wings,
+    so the planner is forced to use-stairs to reach the far floor.
+
+    rooms          : list of room ids (e.g. "f1_a", "f2_c", "f1_stair", "f2_stair")
+    doors          : list of (door_id, room_a, room_b) — includes always-open passages AND closeable doors
+    robot_location : current room id of the robot ("" if unknown)
+    victim_ids     : list of int victim ids
+    victim_rooms   : list of room ids, parallel to victim_ids
+    stairs         : list of (stair_id, landing_a, landing_b) — the inter-floor links
+    open_door_ids  : door/passage ids currently OPEN (door-open in init); the rest get door-closed
+    explored       : room ids flagged explored (default: all rooms — the static building is known)
+    found_ids      : victim ids already detected (executive-tracked) -> (found v) in init
+
+    CRITICAL: door-between AND stair-between are each emitted in BOTH orderings (a one-ordering emit
+    makes reverse traversal unsolvable — the same lesson as the doors domain).
+    """
+    if explored is None:
+        explored = list(rooms)
+    open_set = set(open_door_ids)
+    objs_room = " ".join(_san(r) for r in rooms) or "R_none"
+    objs_door = " ".join(_san(d[0]) for d in doors)
+    objs_stair = " ".join(_san(s[0]) for s in stairs)
+    objs_vic = " ".join(f"v{i}" for i in victim_ids)
+
+    init = []
+    if robot_location:
+        init.append(f"(at {_san(robot_location)})")
+    for did, a, b in doors:
+        init.append(f"(door-between {_san(did)} {_san(a)} {_san(b)})")
+        init.append(f"(door-between {_san(did)} {_san(b)} {_san(a)})")  # both orderings (mandatory)
+        init.append(f"(door-open {_san(did)})" if did in open_set else f"(door-closed {_san(did)})")
+    for sid, a, b in stairs:
+        init.append(f"(stair-between {_san(sid)} {_san(a)} {_san(b)})")
+        init.append(f"(stair-between {_san(sid)} {_san(b)} {_san(a)})")  # both orderings (mandatory)
+    for r in explored:
+        init.append(f"(explored {_san(r)})")
+    for vid, vroom in zip(victim_ids, victim_rooms):
+        init.append(f"(victim-at v{vid} {_san(vroom)})")
+    for vid in found_ids:
+        if vid in victim_ids:
+            init.append(f"(found v{vid})")
+    goal = " ".join(f"(reported v{vid})" for vid in victim_ids) or "(= 0 0)"
+
+    obj_line = f"    {objs_room} - location"
+    if objs_door:
+        obj_line += f"\n    {objs_door} - door"
+    if objs_stair:
+        obj_line += f"\n    {objs_stair} - stair"
+    if objs_vic:
+        obj_line += f"\n    {objs_vic} - victim"
+    return (
+        f"(define (problem {problem_name})\n"
+        f"  (:domain spot-sar-building)\n"
+        f"  (:objects\n{obj_line})\n"
+        f"  (:init\n    " + "\n    ".join(init) + ")\n"
+        f"  (:goal (and {goal})))\n"
+    )
+
+
 def _san(loc: str) -> str:
     """PDDL identifiers can't contain '-'; cells like L_-1_2 -> L_n1_2."""
     return loc.replace("-", "n")

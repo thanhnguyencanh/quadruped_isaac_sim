@@ -26,13 +26,15 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     floor = LaunchConfiguration("floor")        # floor:=true -> multi-room + openable doors
+    building = LaunchConfiguration("building")  # building:=true -> two-floor building (stairs)
     humans = LaunchConfiguration("humans")      # humans:=false -> orange box victims
     detector = LaunchConfiguration("detector")  # yolo | hsv
     mapping = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "mapping.launch.py"])
         ),
-        launch_arguments={"floor": floor, "humans": humans, "detector": detector}.items(),
+        launch_arguments={"floor": floor, "building": building,
+                          "humans": humans, "detector": detector}.items(),
     )
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -41,6 +43,7 @@ def generate_launch_description():
     )
     return LaunchDescription([
         DeclareLaunchArgument("floor", default_value="false"),
+        DeclareLaunchArgument("building", default_value="false"),
         DeclareLaunchArgument("humans", default_value="true"),
         DeclareLaunchArgument("detector", default_value="yolo"),
         mapping, nav2,

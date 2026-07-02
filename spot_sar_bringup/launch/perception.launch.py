@@ -41,6 +41,7 @@ def _launch(context, *args, **kwargs):
     repo = LaunchConfiguration("repo").perform(context)
     gui = LaunchConfiguration("gui").perform(context).lower() in ("1", "true", "yes")
     floor = LaunchConfiguration("floor").perform(context).lower() in ("1", "true", "yes")
+    building = LaunchConfiguration("building").perform(context).lower() in ("1", "true", "yes")
     humans = LaunchConfiguration("humans").perform(context).lower() in ("1", "true", "yes")
     detector = LaunchConfiguration("detector").perform(context).lower()  # "yolo" | "hsv"
     domain_id = LaunchConfiguration("domain_id").perform(context)
@@ -51,7 +52,9 @@ def _launch(context, *args, **kwargs):
     cmd = [run_isaac, app]
     if gui:
         cmd.append("--gui")
-    if floor:
+    if building:
+        cmd.append("--building")  # two-floor building (x-offset wings + stacked stair landing)
+    elif floor:
         cmd.append("--floor")  # multi-room floor with openable doors
     if not humans:
         cmd.append("--no-humans")  # orange box victims (for the HSV detector) instead of humans
@@ -116,6 +119,8 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("floor", default_value="false"),
+            DeclareLaunchArgument("building", default_value="false",
+                                  description="two-floor building (stairs) instead of the single room / floor"),
             DeclareLaunchArgument("humans", default_value="true",
                                   description="human victims (YOLO) vs orange boxes (HSV)"),
             DeclareLaunchArgument("detector", default_value="yolo",

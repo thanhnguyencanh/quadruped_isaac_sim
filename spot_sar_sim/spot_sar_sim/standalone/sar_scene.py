@@ -85,20 +85,23 @@ def _label(prim, semantic_label):
 def _add_human(define_prim, UsdGeom, Gf, path, pos, yaw_deg, character_usd):
     """Reference an Isaac People character (SkelRoot, Z-up) at a victim position, standing on the
     floor. A static reference renders the skeleton's BIND POSE (standing) — no animation graph
-    needed. `pos` is the FOOT position; z is forced to 0 (characters stand on the ground)."""
+    needed. `pos` is the FOOT position; pos[2] is the floor's slab-top height (0.0 on floor 1,
+    3.0 on the upper floor of the two-floor building)."""
     prim = define_prim(path, "Xform")
     prim.GetReferences().AddReference(character_usd)
     xf = UsdGeom.Xformable(prim)
     xf.ClearXformOpOrder()
-    xf.AddTranslateOp().Set(Gf.Vec3d(float(pos[0]), float(pos[1]), 0.0))
+    xf.AddTranslateOp().Set(Gf.Vec3d(float(pos[0]), float(pos[1]), float(pos[2])))
     xf.AddRotateZOp().Set(float(yaw_deg))  # face a chosen direction
     return prim
 
 
 def _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions, humans, assets_root_path,
-                       label_semantics):
+                       label_semantics, foot_zs=None):
     """Place victims as Isaac People humans (if humans + assets_root_path) or orange emissive boxes.
-    `positions` is a list of (x, y, z). Returns the list of reported victim positions."""
+    `positions` is a list of (x, y, z) with z the ABSOLUTE marker-centre height. `foot_zs` (parallel,
+    optional) gives each floor's slab-top height for standing HUMANS (default 0.0 = single floor).
+    Returns the list of reported victim positions."""
     use_humans = bool(humans and assets_root_path)
     if humans and not assets_root_path:
         print("[sar_scene] humans requested but no assets_root_path given; using orange markers",
@@ -106,13 +109,14 @@ def _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions, human
     out = []
     for i, (x, y, z) in enumerate(positions):
         if use_humans:
+            foot_z = 0.0 if foot_zs is None else float(foot_zs[i])
             name = HUMAN_CHARACTERS[i % len(HUMAN_CHARACTERS)]
             usd = assets_root_path + f"/Isaac/People/Characters/{name}/{name}.usd"
             yaw = 180.0 if x > 0 else 0.0  # roughly face the room interior / patrolling robot
-            p = _add_human(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, 0.0), yaw, usd)
+            p = _add_human(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, foot_z), yaw, usd)
             if label_semantics:
                 _label(p, "victim")
-            out.append((x, y, 0.0))  # report foot position (z=0)
+            out.append((x, y, foot_z))  # report foot position (on the floor's slab)
         else:
             p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, z), None, VICTIM_COLOR, size=0.5)
             _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
@@ -215,3 +219,69 @@ def build_floor_scene(label_semantics=False, humans=True, assets_root_path=None)
                                  humans, assets_root_path, label_semantics)
 
     return victims, door_handles
+
+
+# ---------------------------------------------------------------- two-floor building (stairs demo)
+SLAB_COLOR = (0.50, 0.50, 0.55)   # structural floor plates
+STEP_COLOR = (0.40, 0.32, 0.22)   # decorative staircase
+
+
+def _add_stair_fill_light(define_prim, UsdLux, UsdGeom, Gf, xy):
+    """The floor-1 stair landing sits UNDER the floor-2 slab, so the DomeLight/DistantLight can't
+    reach it. Add a local sphere light so the decorative stairs are visible to the camera / the
+    elevation map."""
+    stage = define_prim("/World/SceneLights", "Xform").GetStage()
+    light = UsdLux.SphereLight.Define(stage, "/World/SceneLights/StairFill")
+    light.CreateIntensityAttr(45000.0)
+    light.CreateRadiusAttr(0.35)
+    light.CreateColorAttr(Gf.Vec3f(1.0, 0.98, 0.95))
+    UsdGeom.Xformable(light.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(float(xy[0]), float(xy[1]), 1.7))
+
+
+def build_two_floor_scene(label_semantics=False, humans=True, assets_root_path=None):
+    """TWO-FLOOR building (sar_building.py): two x-offset floor wings sharing a vertically-stacked
+    stair landing column, joined only by a stair the robot crosses via an in-app pure-z teleport.
+    Builds: two floor plates + perimeter/divider walls (both floors, z-anchored) + a decorative
+    staircase at the floor-1 landing + closeable door slabs on floor 1 + humans on BOTH floors.
+
+    Requires `sar_building` importable (the Isaac app inserts spot_sar_planning's source dir on
+    sys.path first). Returns (victim_xyz_list, door_handles, stair_info) where stair_info feeds the
+    in-app StairsNode (shared landing xy + the two stand heights + trigger footprint)."""
+    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, UsdPhysics
+    from isaacsim.core.experimental.utils.stage import define_prim
+    import sar_building as BLD
+
+    _add_lighting(define_prim, UsdLux, Gf)                       # fill light for both open-top wings
+    _add_stair_fill_light(define_prim, UsdLux, UsdGeom, Gf, BLD.LANDING_XY)
+
+    # 1. structural floor plates (static colliders Spot stands on): f1 at z=0, f2 at z=3
+    for name, pos, size in BLD.floor_slab_segments():
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, size, SLAB_COLOR)
+        _add_static_collider(UsdPhysics, p)
+
+    # 2. perimeter + divider walls of BOTH floors (static colliders)
+    for name, pos, size in BLD.wall_segments():
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, size, WALL_COLOR)
+        _add_static_collider(UsdPhysics, p)
+
+    # 3. decorative staircase at the floor-1 landing (static colliders; Spot NEVER climbs it)
+    for name, pos, size in BLD.stair_step_boxes():
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, size, STEP_COLOR)
+        _add_static_collider(UsdPhysics, p)
+
+    # 4. closeable door slabs on floor 1 — kinematic colliders lifted open by the door bus
+    door_handles = {}
+    for d in BLD.CLOSEABLE_DOORS:
+        closed, opened = BLD.door_poses(d)
+        size = BLD.door_slab_scale(d)
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{d.id}", closed, size, DOOR_COLOR)
+        _add_kinematic_collider(UsdPhysics, p)
+        door_handles[d.id] = {"prim": p, "closed": closed, "open": opened}
+
+    # 5. victims — Isaac People humans on BOTH floors (feet on each floor's slab) or orange markers
+    positions = [(x, y, z) for (x, y, z, _room) in BLD.VICTIMS]
+    foot_zs = [BLD.FLOOR_Z[BLD.floor_of(room)] for (_x, _y, _z, room) in BLD.VICTIMS]
+    victims = _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions,
+                                 humans, assets_root_path, label_semantics, foot_zs=foot_zs)
+
+    return victims, door_handles, BLD.stair_transition_info()

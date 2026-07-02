@@ -24,6 +24,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 
@@ -46,6 +47,7 @@ class SkillServer(Node):
         self.n_victims = 0
 
         self._opened_doors = set()  # door ids reported open on /door_states (floor demo)
+        self._floor = "f1"          # current floor from /floor_state (two-floor building demo)
         _latched = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
         self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
@@ -53,12 +55,20 @@ class SkillServer(Node):
         self.create_subscription(VictimArray, "/victims", self._on_vic, 10, callback_group=self.cb)
         self.create_subscription(String, "/door_states", self._on_door_state, _latched,
                                  callback_group=self.cb)
+        self.create_subscription(String, "/floor_state", self._on_floor_state, _latched,
+                                 callback_group=self.cb)
         self.door_cmd = self.create_publisher(String, "/door_cmd", 10)
+        self.stairs_cmd = self.create_publisher(String, "/stairs_cmd", 10)
+        # best-effort costmap clears after a floor teleport (drop stale marks at the landing)
+        self._clear_global = self.create_client(ClearEntireCostmap,
+                                                 "/global_costmap/clear_entirely_global_costmap")
+        self._clear_local = self.create_client(ClearEntireCostmap,
+                                                "/local_costmap/clear_entirely_local_costmap")
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose", callback_group=self.cb)
         self.srv = ActionServer(self, Skill, "skill", execute_callback=self._execute,
                                 callback_group=self.cb)
         self.get_logger().info(
-            "skill_server up: /skill {go_to_location|explore|observe|report|open_door}")
+            "skill_server up: /skill {go_to_location|explore|observe|report|open_door|climb_stairs}")
 
     def _on_wm(self, m):
         self.wm = m
@@ -80,6 +90,43 @@ class SkillServer(Node):
             self._opened_doors.add(did)
         else:
             self._opened_doors.discard(did)
+
+    def _on_floor_state(self, m):
+        f = m.data.strip()
+        if f in ("f1", "f2"):
+            self._floor = f
+
+    def _clear_costmaps(self):
+        """Best-effort: drop stale marks (the robot's pre-teleport trace / the decorative stairs) at
+        the landing after a floor change. Non-fatal if Nav2 costmaps aren't up."""
+        for cli in (self._clear_global, self._clear_local):
+            try:
+                if cli.wait_for_service(timeout_sec=1.0):
+                    cli.call_async(ClearEntireCostmap.Request())
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _climb_stairs(self, arg, timeout=25.0):
+        """Change floors via the stairwell: publish '<stair_id> up|down' on /stairs_cmd and BLOCK
+        until /floor_state confirms the target floor. Same busy-poll pattern as _open_door / _nav_to
+        (safe under ReentrantCallbackGroup): the executor keeps servicing /floor_state while we wait.
+        The in-app StairsNode performs the pure-z teleport (Spot's flat policy cannot climb)."""
+        parts = arg.split()
+        if not parts:
+            return False, "empty climb_stairs target"
+        direction = parts[1].strip().lower() if len(parts) > 1 else "up"
+        target = "f2" if direction == "up" else "f1"
+        if self._floor == target:
+            return True, f"already on {target}"
+        self.stairs_cmd.publish(String(data=arg))
+        t0 = time.time()
+        while rclpy.ok() and time.time() - t0 < timeout:
+            if self._floor == target:
+                self._clear_costmaps()
+                return True, f"reached {target}"
+            self.stairs_cmd.publish(String(data=arg))  # re-assert against subscription races
+            time.sleep(0.1)
+        return False, f"did not reach {target} within {timeout:.0f}s"
 
     def _open_door(self, door_id, timeout=20.0):
         """Publish the open command and BLOCK until /door_states confirms the door is open.
@@ -169,6 +216,9 @@ class SkillServer(Node):
 
         elif skill == "open_door":
             res.success, res.message = self._open_door(target)
+
+        elif skill == "climb_stairs":
+            res.success, res.message = self._climb_stairs(target)
 
         else:
             res.success, res.message = False, f"unknown skill '{skill}'"
