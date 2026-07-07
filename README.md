@@ -110,6 +110,10 @@ image with `docker/build_docker.sh` / `docker/push_docker.sh`; see [docker/READM
 
 ## Installation (prerequisites)
 
+> **Moving to a new machine?** See **[MIGRATION.md](MIGRATION.md)** for the full transfer/reinstall
+> procedure (`scripts/make_transfer_bundle.sh` packages the small must-copy files; everything large
+> re-downloads).
+
 ```bash
 # 1. NVIDIA driver  (✓ 580)  — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor)
 nvidia-smi                                   # confirm GPU + driver are live
