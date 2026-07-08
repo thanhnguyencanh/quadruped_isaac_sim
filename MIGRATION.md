@@ -4,6 +4,10 @@ Everything needed to reproduce the Spot SAR Isaac Sim project on a fresh desktop
 a raw byte-transfer: the heavy pieces (Isaac Sim, the ~276 GB asset pack, ROS 2, the venvs, the 7.35 GB
 docker image) **re-download or rebuild**. You copy one small bundle, re-auth credentials, and rebuild.
 
+*Verified 2026-07-08 against commit `b2898c4`. For what's implemented + what to do next once you're back
+up, see `docs/STATUS_AND_NEXT_STEPS.md` (it lives in the gitignored `docs/`, so it arrives via the
+transfer bundle in §0, not the clone).*
+
 > **Context that simplifies things:** on the original box, Isaac Sim + the assets lived in a *root-owned,
 > shared* `/home/isaac/` (a lab machine shared with `IsaacLab` and other users), symlinked into the home
 > dir. On a **personal** desktop you install Isaac under your **own** home — so the root-owned-symlink
@@ -110,3 +114,31 @@ cd ~/unige_ws && colcon build --symlink-install && source install/setup.bash
   path-hashed dir under `~/.claude/projects/`.
 - **conda** (if you install miniconda) auto-activates its base env and shadows ROS/Isaac — `run_isaac.sh`
   already `conda deactivate`s defensively, so this is handled.
+
+## 6. Verify your restore
+
+Cheap checks, fastest first — each isolates one layer:
+
+```bash
+# a) GPU + driver
+nvidia-smi
+
+# b) pure-python + PDDL layer (no Isaac): the two-floor geometry self-test
+python3 ~/unige_ws/src/quadruped_isaac_sim/spot_sar_planning/spot_sar_planning/sar_building.py
+#    expect: "[sar_building] OK: 8 rooms, 6 portals ... landing stacked at (12.0, 0.0)."
+
+# c) workspace built + sourced
+cd ~/unige_ws && source install/setup.bash && ros2 pkg list | grep spot_sar   # 8 packages
+
+# d) Isaac + the two-floor scene renders (GUI), Spot stands
+./src/quadruped_isaac_sim/scripts/run_isaac.sh \
+   src/quadruped_isaac_sim/spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --building --gui
+
+# e) end-to-end sanity: /cmd_vel + camera + YOLO (headless), then teleport the stairs by hand
+ros2 launch spot_sar_bringup perception.launch.py building:=true      # shell 1
+ros2 topic pub --once /stairs_cmd std_msgs/msg/String '{data: "stair_main up"}'   # shell 2 (near the landing)
+ros2 topic echo /floor_state   # -> "f2"
+```
+
+If (b) passes you know the symbolic layer transferred intact; if (d) renders the building with Spot
+standing, the Isaac install + assets + venvs are all wired correctly.
