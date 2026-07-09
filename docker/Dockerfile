@@ -19,7 +19,7 @@
 FROM osrf/ros:jazzy-desktop
 
 LABEL org.opencontainers.image.title="unige_legged" \
-      org.opencontainers.image.description="Spot SAR ROS 2 environment (Jazzy + Nav2 + slam_toolbox + RGB-D perception + unified-planning/Fast Downward/ENHSP)" \
+      org.opencontainers.image.description="Spot SAR ROS 2 environment (Jazzy + Nav2 + slam_toolbox + RGB-D perception + OctoMap/grid_map 3D mapping + unified-planning/Fast Downward/ENHSP; optional YOLO + elevation_mapping_cupy)" \
       org.opencontainers.image.source="https://github.com/thanhnguyencanh/quadruped_isaac_sim" \
       maintainer="thanhnguyencanh <canhthanhlt@gmail.com>"
 
@@ -53,6 +53,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-tf2-ros ros-jazzy-tf2-geometry-msgs ros-jazzy-tf2-sensor-msgs \
         ros-jazzy-rqt-image-view ros-jazzy-rviz2 \
         python3-opencv python3-numpy && \
+    rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# 2b. 3D mapping — camera point cloud + OctoMap voxel map + grid_map (all apt,
+#     GPU-free). depth_image_proc: /camera/depth -> /camera/points;
+#     octomap_server: the 3D octree; grid_map: the elevation-map message + RViz
+#     stack (also required by the optional elevation_mapping_cupy in 3d). This
+#     backs `mapping3d.launch.py` (OctoMap path) fully inside the container.
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-depth-image-proc \
+        ros-jazzy-octomap ros-jazzy-octomap-msgs ros-jazzy-octomap-ros \
+        ros-jazzy-octomap-server ros-jazzy-octomap-rviz-plugins \
+        ros-jazzy-grid-map ros-jazzy-grid-map-rviz-plugin ros-jazzy-grid-map-msgs \
+        ros-jazzy-grid-map-ros ros-jazzy-grid-map-octomap ros-jazzy-grid-map-visualization && \
     rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -104,6 +119,42 @@ RUN if [ "$WITH_YOLO" = "1" ]; then \
         deactivate ; \
     else \
         echo ">> WITH_YOLO=0 — skipping YOLO venv; run perception with detector:=hsv inside the container" ; \
+    fi
+
+# -----------------------------------------------------------------------------
+# 3d. OPTIONAL elevation map — leggedrobotics elevation_mapping_cupy (CuPy GPU).
+#     OFF by default; HEAVY (cupy-cuda12x ~1 GB) and needs the NVIDIA GPU at
+#     RUNTIME (build is GPU-free — cupy-cuda12x bundles the CUDA runtime). Enable:
+#         WITH_ELEVATION=1 ./docker/build_docker.sh
+#     Built into its own overlay (/opt/elevation_ws, sourced from .bashrc); the
+#     node imports cupy from /root/elevation_venv (numpy pinned to the ROS ABI).
+#     grid_map + octomap already come from 2b; here we add pybind11-vendor + CuPy.
+# -----------------------------------------------------------------------------
+ARG WITH_ELEVATION=0
+ARG EMC_BRANCH=codex/elevation-despike-jazzy
+ENV ELEV_VENV=/root/elevation_venv
+ENV ELEV_WS=/opt/elevation_ws
+RUN if [ "$WITH_ELEVATION" = "1" ]; then \
+        set -e && \
+        echo ">> WITH_ELEVATION=1 — building elevation_mapping_cupy (${EMC_BRANCH}) + CuPy venv" && \
+        apt-get update && apt-get install -y --no-install-recommends ros-jazzy-pybind11-vendor && \
+        rm -rf /var/lib/apt/lists/* && \
+        python3 -m venv --system-site-packages "${ELEV_VENV}" && \
+        source "${ELEV_VENV}/bin/activate" && \
+        pip install --no-cache-dir --upgrade pip && \
+        pip install --no-cache-dir "numpy==1.26.4" cupy-cuda12x scipy shapely && \
+        deactivate && \
+        mkdir -p "${ELEV_WS}/src" && cd "${ELEV_WS}/src" && \
+        git clone --branch "${EMC_BRANCH}" --depth 1 \
+            https://github.com/leggedrobotics/elevation_mapping_cupy.git && \
+        cd "${ELEV_WS}" && source /opt/ros/jazzy/setup.bash && \
+        (rosdep update --rosdistro jazzy || true) && \
+        (rosdep install --from-paths src/elevation_mapping_cupy --ignore-src -r -y || true) && \
+        colcon build --packages-up-to elevation_mapping_cupy --symlink-install && \
+        echo "source ${ELEV_WS}/install/setup.bash" >> /root/.bashrc && \
+        echo ">> elevation_mapping_cupy built into ${ELEV_WS}; run its node under ${ELEV_VENV}" ; \
+    else \
+        echo ">> WITH_ELEVATION=0 — skipping elevation_mapping_cupy (OctoMap 3D map from 2b still works)" ; \
     fi
 
 # -----------------------------------------------------------------------------
