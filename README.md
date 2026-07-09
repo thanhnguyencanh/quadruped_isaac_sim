@@ -92,11 +92,9 @@ docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to b
 Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + host networking, so the
 container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
 
-The published image already bundles the **YOLO** detector (`/root/yolo_venv` — CPU torch + `yolov8n.pt`,
-numpy pinned 1.26.4) and the **OctoMap** 3D-mapping stack, so the default humans+YOLO perception and
-`mapping3d.launch.py` both work out of the box. When you build the image yourself, two flags tune it —
-the learned detector (`WITH_YOLO=1`) and the GPU elevation map (`WITH_ELEVATION=1`, needs the GPU at
-runtime):
+The published image already bundles **YOLO** (`/root/yolo_venv`) and the **OctoMap** 3D-mapping stack,
+so the default humans+YOLO perception and `mapping3d.launch.py` work out of the box. Building it
+yourself, `WITH_YOLO=1` adds the detector and `WITH_ELEVATION=1` the GPU elevation map:
 
 ```bash
 WITH_YOLO=1 ./docker/build_docker.sh                    # reproduce the published image
