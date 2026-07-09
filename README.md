@@ -172,9 +172,9 @@ cp yolov8n.pt ~/yolo_venv/yolov8n.pt                      # pin absolute path (n
 deactivate
 ```
 
-> `ROS_DOMAIN_ID` isolates DDS traffic; this project standardizes on **42** (both paths). Export the
-> same value in every shell — the Isaac app and any `ros2` CLI — or they won't discover each other:
-> `export ROS_DOMAIN_ID=42`. (`run_unige_docker.sh` sets it inside the container for you.)
+> **`ROS_DOMAIN_ID=42`** must be the same in every shell (the Isaac app + each `ros2` CLI) or they
+> can't discover each other; `run_unige_docker.sh` sets it inside the container for you. (Why it
+> matters, and the failure symptom, are in the Quick-start gotchas below.)
 
 ## Quick start
 
@@ -285,8 +285,7 @@ rooms, doors, victims, `room_of`):
 
 Verified component-by-component: the PDDL gating (`open-door` before `move`), the executive's
 doors-profile planning, the slab physically opening on `/door_cmd`, and the grounding reflecting the
-live door state. *(Phase 2, planned: swap the HSV detector for a pretrained YOLO person/object
-detector — no custom training.)*
+live door state.
 
 ## Two-floor building with a stairwell (PDDL `use-stairs`)
 
@@ -369,10 +368,6 @@ ros2 launch spot_sar_bringup rviz.launch.py rviz_config:=$(ros2 pkg prefix spot_
   renderer** → real OOM risk; if it won't co-run, keep OctoMap (which already captures the stairs as
   voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
   a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
-
-> **Docker:** a ROS 2 environment image (`thanhnc19/unige_legged`) is provided under
-> [docker/](docker/) for the ROS-side stack (Nav2, slam_toolbox, perception, planner).
-> Isaac Sim stays a host install; the container talks to it over DDS. See [docker/README.md](docker/README.md).
 
 ## Machine-specific footguns (handled by `scripts/run_isaac.sh` + the apps)
 
