@@ -67,4 +67,7 @@ Override the name/tag with `IMAGE=` / `TAG=`; run a one-shot command with
   `docker build` (ARG default) is HSV-only — pass `WITH_YOLO=1` to match the published image, or run
   perception with `humans:=false detector:=hsv` to skip YOLO.
 - **elevation_mapping_cupy is opt-in** (`WITH_ELEVATION=1`): a CuPy/GPU source build, needs the NVIDIA
-  GPU at runtime. OctoMap already gives a GPU-free 3D voxel map without it.
+  GPU at runtime. OctoMap already gives a GPU-free 3D voxel map without it. The layer **compiles** the
+  package but the node is **not runtime-complete** — it also needs `ros2_numpy`, `torch`/`torchvision`,
+  `sklearn`, and `tf-transformations` (rosdep can't resolve `ros2_numpy` in this base). Install those
+  before launching elevation, and note it's **unverified end-to-end** (needs a GPU + live Isaac scene).

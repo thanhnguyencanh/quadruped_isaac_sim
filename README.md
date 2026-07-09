@@ -66,7 +66,7 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 ## Installation
 
 ```bash
-# 1. NVIDIA driver — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor; 580 verified here)
+# 1. NVIDIA driver — RTX GPU + driver (Isaac Sim 6.0)
 nvidia-smi                                   # confirm GPU + driver are live
 
 # 2. Isaac Sim 6.0 — download the *workstation* package + asset pack from NVIDIA, unzip to these dirs
@@ -78,8 +78,7 @@ cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/is
 
 The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
 slam_toolbox + RGB-D perception incl. the YOLO detector + OctoMap/grid_map 3D mapping + the PDDL
-planner** (`/opt/sar_planning_venv`). You install **nothing** from the native steps below — just pull
-and run:
+planner** (`/opt/sar_planning_venv`). 
 
 ```bash
 docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to build it locally
@@ -93,12 +92,13 @@ Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + hos
 container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
 
 The published image already bundles **YOLO** (`/root/yolo_venv`) and the **OctoMap** 3D-mapping stack,
-so the default humans+YOLO perception and `mapping3d.launch.py` work out of the box. Building it
-yourself, `WITH_YOLO=1` adds the detector and `WITH_ELEVATION=1` the GPU elevation map:
+so the default humans+YOLO perception and `mapping3d.launch.py` work out of the box — `docker pull` or a
+plain `./docker/build_docker.sh` both give this. Elevation mapping is **opt-in** (GPU-only; the
+`WITH_ELEVATION=1` build compiles the package but its node needs extra runtime deps — see
+[docker/README.md](docker/README.md)):
 
 ```bash
-WITH_YOLO=1 ./docker/build_docker.sh                    # reproduce the published image
-WITH_YOLO=1 WITH_ELEVATION=1 ./docker/build_docker.sh   # + elevation_mapping_cupy (CuPy/GPU)
+WITH_ELEVATION=1 ./docker/build_docker.sh   # + elevation_mapping_cupy (CuPy/GPU, opt-in)
 ```
 
 ### Native install — ROS side on the host
@@ -221,7 +221,9 @@ standalone apps (all share the same victim markers / Isaac People + `UsdSemantic
 
 **Check a sim environment** — the no-ROS viewer (`spot_view_scene.py`) boots Isaac, loads the scene +
 Spot (standing) and renders it, so you can eyeball geometry/lighting before wiring any ROS. GUI on by
-default (needs `export DISPLAY=:0`); `--headless` just validates that the scene loads.
+default (needs `export DISPLAY=:0`); `--headless` just validates that the scene loads. **Run these on
+the HOST, not in the `unige_legged` container** — Isaac Sim is a host install, so `run_isaac.sh` inside
+the container fails with `cd: /root/isaacsim: No such file or directory`.
 
 ```bash
 # quickest visual check of each environment (orbit with the mouse; Ctrl-C to quit):

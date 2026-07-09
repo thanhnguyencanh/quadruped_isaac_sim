@@ -129,6 +129,9 @@ RUN if [ "$WITH_YOLO" = "1" ]; then \
 #     Built into its own overlay (/opt/elevation_ws, sourced from .bashrc); the
 #     node imports cupy from /root/elevation_venv (numpy pinned to the ROS ABI).
 #     grid_map + octomap already come from 2b; here we add pybind11-vendor + CuPy.
+#     NOTE: this COMPILES the package, but the node ALSO needs ros2_numpy + torch +
+#     torchvision + sklearn + tf-transformations at runtime (rosdep can't resolve
+#     ros2_numpy in this base) — install those before you actually launch elevation.
 # -----------------------------------------------------------------------------
 ARG WITH_ELEVATION=0
 ARG EMC_BRANCH=codex/elevation-despike-jazzy
