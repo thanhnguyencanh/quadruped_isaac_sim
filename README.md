@@ -292,8 +292,15 @@ vertically-stacked building would corrupt. So:
   exact same `(x,y)=(10.5, 0)`, differing only in z (0.0 vs 3.0). So the floor change is a **pure-z
   teleport** `(10.5,0,0.8)↔(10.5,0,3.8)`: odom x,y stay constant while z jumps ±3 m, so slam's
   **planar `map→odom` sees ~no discontinuity** (verified: odom `x:0.12, y:-0.02, z:2.68` after a climb).
-  A real staircase is rendered at the landing for the camera / YOLO / 3D-mapping; **Spot never drives
-  onto it** — the teleport does the level change.
+  A real staircase is rendered at the landing for the camera / YOLO / 3D-mapping (its steps rise to
+  meet the floor-2 slab at z=3.0 so it reads as connected); **Spot never drives onto it** — the
+  teleport does the level change.
+
+> **Why teleport instead of real climbing?** `SpotFlatTerrainPolicy` is trained on flat ground and
+> **cannot physically walk up steps**, so the staircase is decorative and the level change is the
+> pure-z teleport. **TODO / future work — real stair-climbing:** swap in a stairs-capable locomotion
+> policy, give the steps true collision-stepping, and retire the teleport (which also means going
+> beyond the single 2D map). Substantial work; the teleport is the deliberate abstraction for now.
 
 Run the **full closed loop**: `ros2 launch spot_sar_bringup building_mission.launch.py` — the executive
 plans `open-door` (floor 1) → reaches + reports the floor-1 victim → `move` to the landing →

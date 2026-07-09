@@ -233,7 +233,8 @@ def stair_step_boxes():
     steps = []
     n = 10
     run = 0.3
-    rise = 0.25
+    rise = 0.30          # 10 * 0.30 = 3.0 => the top step meets the floor-2 slab (FLOOR_Z['f2']=3.0),
+                         #                    so the staircase visually connects the two floors
     x0 = 12.0            # start just east of the landing centre, against the east wall (x=15)
     width_y = 1.2
     for i in range(n):
