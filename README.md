@@ -74,15 +74,6 @@ cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/is
 ~/isaacsim/python.sh -c "import isaacsim; print('isaacsim import OK')"
 ```
 
-> **Isaac assets — you don't need all ~276 GB.** The apps pin the asset root to `$ISAAC_ASSETS`
-> (default `~/isaacsim_assets`); this project references only `Isaac/Environments/Grid/default_environment.usd`
-> and `Isaac/People/Characters/*` (Spot itself ships inside Isaac Sim). Easiest is the full NVIDIA
-> asset-pack download; leanest is copying just those two subtrees (a few GB) into `~/isaacsim_assets/Isaac/…`.
->
-> **Nothing else to download.** The victim dataset (`~/unige_ws/datasets/sar_victims/`) is optional and
-> **regenerated** by `replicator_sar_sdg.py` (Phase 2 SDG); the live missions don't need it. The YOLO
-> weights (`yolov8n.pt`) ship in the Docker image and auto-download on first run for a native install.
-
 ### Docker (recommended) — ROS side in the `unige_legged` image
 
 The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
@@ -99,16 +90,6 @@ docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to b
 
 Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + host networking, so the
 container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
-
-The published image already bundles **YOLO** (`/root/yolo_venv`) and the **OctoMap** 3D-mapping stack,
-so the default humans+YOLO perception and `mapping3d.launch.py` work out of the box — `docker pull` or a
-plain `./docker/build_docker.sh` both give this. Elevation mapping is **opt-in** (GPU-only; the
-`WITH_ELEVATION=1` build compiles the package but its node needs extra runtime deps — see
-[docker/README.md](docker/README.md)):
-
-```bash
-WITH_ELEVATION=1 ./docker/build_docker.sh   # + elevation_mapping_cupy (CuPy/GPU, opt-in)
-```
 
 ### Native install — ROS side on the host
 
