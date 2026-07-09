@@ -1,8 +1,8 @@
 # `unige_legged` — Spot SAR ROS 2 environment image
 
 A Docker image (`thanhnc19/unige_legged`) that ships the **ROS 2 side** of the Spot SAR
-stack: ROS 2 **Jazzy** + Nav2 + slam_toolbox + the RGB-D perception dependencies + the PDDL
-planner (unified-planning + Fast Downward + ENHSP). Modeled on the
+stack: ROS 2 **Jazzy** + Nav2 + slam_toolbox + the RGB-D perception (incl. the YOLO detector)
++ OctoMap/grid_map 3D mapping + the PDDL planner (unified-planning + Fast Downward + ENHSP). Modeled on the
 [`hesfm` docker](../../../hesfm_ws/src/hesfm/docker): the image is an **environment only** —
 your source is **not** baked in; mount the colcon workspace at run time and build it inside.
 
@@ -36,10 +36,10 @@ newgrp docker          # apply to the current shell (or log out/in)
 ## Usage
 
 ```bash
-# 1. Build (~ROS 2 Jazzy desktop + Nav2 + planner; first build is slow)
-./docker/build_docker.sh
-#    ...or bake in the learned YOLO detector venv (~/yolo_venv, +~2-3 GB CPU torch):
-WITH_YOLO=1 ./docker/build_docker.sh
+# 1. Build. The published image is built WITH_YOLO=1 (OctoMap/grid_map 3D mapping is default);
+#    a bare ./docker/build_docker.sh is HSV-only. Add the GPU elevation map with WITH_ELEVATION=1.
+WITH_YOLO=1 ./docker/build_docker.sh                    # reproduce the published image
+WITH_YOLO=1 WITH_ELEVATION=1 ./docker/build_docker.sh   # + elevation_mapping_cupy (CuPy/GPU)
 
 # 2. Push to Docker Hub (needs `docker login -u thanhnc19`)
 ./docker/push_docker.sh
@@ -61,7 +61,10 @@ Override the name/tag with `IMAGE=` / `TAG=`; run a one-shot command with
   `source /opt/sar_planning_venv/bin/activate` to use Fast Downward / ENHSP.
 - GPU flags (`--gpus all`) are added automatically when `nvidia-smi` is present (only needed
   if you run GPU ROS nodes in the container; Isaac itself is on the host).
-- **Learned detector (YOLO) is opt-in.** The default image ships only the HSV victim detector, so
-  run perception with `humans:=false detector:=hsv`. To use the pretrained YOLOv8 path, rebuild with
-  `WITH_YOLO=1 ./docker/build_docker.sh` — that creates `~/yolo_venv` (`/root/yolo_venv`, where
-  `perception.launch.py` looks) with CPU torch + ultralytics + `yolov8n.pt`, numpy pinned to 1.26.4.
+- **YOLO + OctoMap are included** in the published image: the pretrained YOLOv8 detector at
+  `~/yolo_venv` (`/root/yolo_venv`, where `perception.launch.py` looks — CPU torch + `yolov8n.pt`,
+  numpy pinned 1.26.4) and the OctoMap/grid_map 3D-mapping stack (`mapping3d.launch.py`). A bare local
+  `docker build` (ARG default) is HSV-only — pass `WITH_YOLO=1` to match the published image, or run
+  perception with `humans:=false detector:=hsv` to skip YOLO.
+- **elevation_mapping_cupy is opt-in** (`WITH_ELEVATION=1`): a CuPy/GPU source build, needs the NVIDIA
+  GPU at runtime. OctoMap already gives a GPU-free 3D voxel map without it.
