@@ -108,33 +108,61 @@ adds `--gpus all` when `nvidia-smi` is present, and shares `--net=host --ipc=hos
 + the X11 socket. Override `IMAGE`, `TAG`, `ROS_DOMAIN_ID`, or `CMD` via env vars. Build/push the
 image with `docker/build_docker.sh` / `docker/push_docker.sh`; see [docker/README.md](docker/README.md).
 
-## Installation (prerequisites)
+## Installation
 
-> **Moving to a new machine?** See **[MIGRATION.md](MIGRATION.md)** for the full transfer/reinstall
-> procedure (`scripts/make_transfer_bundle.sh` packages the small must-copy files; everything large
-> re-downloads).
+Two things always install on the **host** — Docker can't provide them, because the GPU driver and
+Isaac Sim are bound to the machine. For the **ROS side** (Nav2, slam_toolbox, perception, PDDL
+planner) pick **one** path: the prebuilt **Docker** image (recommended — nothing to install) or a
+**native** install.
 
 ```bash
-# 1. NVIDIA driver  (✓ 580)  — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor)
+# HOST prerequisites — required for BOTH paths
+# 1. NVIDIA driver — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor; 580 verified here)
 nvidia-smi                                   # confirm GPU + driver are live
 
-# 2. Isaac Sim 6.0  (✓ ~/isaacsim, assets ✓ ~/isaacsim_assets)
-#    Download the Isaac Sim 6.0 *workstation* package + asset pack from NVIDIA, unzip to those dirs.
-cat ~/isaacsim/VERSION                       # expect 6.0.0-...
+# 2. Isaac Sim 6.0 — download the *workstation* package + asset pack from NVIDIA, unzip to these dirs
+cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/isaacsim_assets)
 ~/isaacsim/python.sh -c "import isaacsim; print('isaacsim import OK')"
+```
 
-# 3. ROS 2 Jazzy + dev tools  (✓)  — ros-dev-tools provides colcon, rosdep, vcstool
+### Docker (recommended) — ROS side in the `unige_legged` image
+
+The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
+slam_toolbox + RGB-D perception deps + the PDDL planner** (`/opt/sar_planning_venv`). You install
+**nothing** from the native steps below — just pull and run:
+
+```bash
+docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to build it locally
+./docker/run_unige_docker.sh                  # repo mounted, host net + GPU, ROS_DOMAIN_ID=42
+#   then inside the container:
+#     cd /opt/unige_ws && colcon build --symlink-install && source install/setup.bash
+#     ros2 topic list          # should show the host Isaac bridge topics on domain 42
+```
+
+Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + host networking, so the
+container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
+
+> **YOLO caveat.** The image does **not** include the learned detector (`torch`/`ultralytics`/weights) —
+> only the HSV path works inside the container. Run perception with `humans:=false detector:=hsv`, or
+> for YOLO either run perception natively (venv step 6 below) or extend the image with that venv.
+
+### Native install — ROS side on the host
+
+Install the ROS stack + the two Python venvs directly (this is what this machine runs):
+
+```bash
+# 3. ROS 2 Jazzy + dev tools — ros-dev-tools provides colcon, rosdep, vcstool
 sudo apt update
 sudo apt install -y ros-jazzy-desktop ros-dev-tools
 echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 
-# 4. Navigation / SLAM / sensor bridges  (✓ except pointcloud_to_laserscan)
+# 4. Navigation / SLAM / sensor bridges
 sudo apt install -y ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
                     ros-jazzy-depthimage-to-laserscan
 # (later, only if /scan is synthesized from a 3D cloud:)
 # sudo apt install -y ros-jazzy-pointcloud-to-laserscan
 
-# 5. Planning venv  (✓ ~/sar_planning_venv) — PDDL solving deps.
+# 5. Planning venv (~/sar_planning_venv) — PDDL solving deps.
 #    Fast Downward compiles from source (needs cmake/g++); ENHSP is JVM-based (needs a JRE).
 sudo apt install -y python3.12-venv python3.12-dev build-essential cmake default-jre
 python3.12 -m venv --system-site-packages ~/sar_planning_venv   # --system-site-packages => rclpy importable
@@ -144,7 +172,7 @@ pip install unified-planning up-fast-downward up-enhsp
 python -c "from unified_planning.shortcuts import get_environment; print(list(get_environment().factory.engines)[:5])"
 deactivate
 
-# 6. YOLO venv  (✓ ~/yolo_venv) — the learned victim detector (pretrained YOLOv8, no training).
+# 6. YOLO venv (~/yolo_venv) — the learned victim detector (pretrained YOLOv8, no training).
 #    --system-site-packages => rclpy/cv_bridge import; numpy PINNED to 1.26 to match ROS's ABI
 #    (cv_bridge is built against numpy 1.x; torch/opencv would otherwise pull numpy 2.x and clash).
 python3.12 -m venv --system-site-packages ~/yolo_venv
@@ -157,9 +185,9 @@ cp yolov8n.pt ~/yolo_venv/yolov8n.pt                      # pin absolute path (n
 deactivate
 ```
 
-> `ROS_DOMAIN_ID` is used to isolate DDS traffic; this project standardizes on **42**. Export the
-> same value in every shell (Isaac app and any `ros2` CLI) or they won't discover each other:
-> `export ROS_DOMAIN_ID=42`.
+> `ROS_DOMAIN_ID` isolates DDS traffic; this project standardizes on **42** (both paths). Export the
+> same value in every shell — the Isaac app and any `ros2` CLI — or they won't discover each other:
+> `export ROS_DOMAIN_ID=42`. (`run_unige_docker.sh` sets it inside the container for you.)
 
 ## Quick start
 
