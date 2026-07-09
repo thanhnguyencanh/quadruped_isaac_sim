@@ -74,6 +74,15 @@ cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/is
 ~/isaacsim/python.sh -c "import isaacsim; print('isaacsim import OK')"
 ```
 
+> **Isaac assets — you don't need all ~276 GB.** The apps pin the asset root to `$ISAAC_ASSETS`
+> (default `~/isaacsim_assets`); this project references only `Isaac/Environments/Grid/default_environment.usd`
+> and `Isaac/People/Characters/*` (Spot itself ships inside Isaac Sim). Easiest is the full NVIDIA
+> asset-pack download; leanest is copying just those two subtrees (a few GB) into `~/isaacsim_assets/Isaac/…`.
+>
+> **Nothing else to download.** The victim dataset (`~/unige_ws/datasets/sar_victims/`) is optional and
+> **regenerated** by `replicator_sar_sdg.py` (Phase 2 SDG); the live missions don't need it. The YOLO
+> weights (`yolov8n.pt`) ship in the Docker image and auto-download on first run for a native install.
+
 ### Docker (recommended) — ROS side in the `unige_legged` image
 
 The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
