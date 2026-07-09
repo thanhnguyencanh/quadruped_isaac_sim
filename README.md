@@ -77,8 +77,9 @@ cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/is
 ### Docker (recommended) — ROS side in the `unige_legged` image
 
 The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
-slam_toolbox + RGB-D perception deps + the PDDL planner** (`/opt/sar_planning_venv`). You install
-**nothing** from the native steps below — just pull and run:
+slam_toolbox + RGB-D perception incl. the YOLO detector + OctoMap/grid_map 3D mapping + the PDDL
+planner** (`/opt/sar_planning_venv`). You install **nothing** from the native steps below — just pull
+and run:
 
 ```bash
 docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to build it locally
@@ -91,19 +92,16 @@ docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to b
 Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + host networking, so the
 container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
 
-**YOLO in the container (opt-in).** The default image omits the learned detector
-(`torch`/`ultralytics`/weights, ~2–3 GB), so out of the box run perception with the HSV path
-(`humans:=false detector:=hsv`). To bake YOLO in, rebuild with `WITH_YOLO=1` — the Dockerfile then
-creates `~/yolo_venv` (= `/root/yolo_venv`, exactly where `perception.launch.py` looks) with CPU
-torch + ultralytics + the pinned `yolov8n.pt`, numpy pinned to 1.26.4 to match the ROS ABI:
+The published image already bundles the **YOLO** detector (`/root/yolo_venv` — CPU torch + `yolov8n.pt`,
+numpy pinned 1.26.4) and the **OctoMap** 3D-mapping stack, so the default humans+YOLO perception and
+`mapping3d.launch.py` both work out of the box. When you build the image yourself, two flags tune it —
+the learned detector (`WITH_YOLO=1`) and the GPU elevation map (`WITH_ELEVATION=1`, needs the GPU at
+runtime):
 
 ```bash
-WITH_YOLO=1 ./docker/build_docker.sh          # build the image with the YOLO venv baked in
-./docker/run_unige_docker.sh                  # then perception's default humans+YOLO path works in-container
+WITH_YOLO=1 ./docker/build_docker.sh                    # reproduce the published image
+WITH_YOLO=1 WITH_ELEVATION=1 ./docker/build_docker.sh   # + elevation_mapping_cupy (CuPy/GPU)
 ```
-
-(A runtime `pip install` in a running container is lost — `run_unige_docker.sh` uses `--rm` — so the
-venv belongs in the image, hence the build flag.)
 
 ### Native install — ROS side on the host
 
