@@ -65,6 +65,18 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 
 ## Installation
 
+> **⚠️ Two halves that run in two places — read this first (it's the #1 point of confusion).**
+> Isaac Sim (the **simulator**: `spot_view_scene.py` and every `spot_*` standalone app) runs on the
+> **HOST**. The **ROS 2 side** (Nav2, SLAM, perception, planner, executive) runs in **Docker** — *or*
+> natively on the host. They connect over DDS (`ROS_DOMAIN_ID=42`, host networking).
+>
+> **You cannot run the simulator in the `unige_legged` container.** Isaac Sim (~25 GB, GPU) is *not
+> in that image*, so `run_isaac.sh` inside the container fails with `cd: /root/isaacsim: No such file
+> or directory`. So "**Docker (recommended)**" below means the **ROS side only** — a containerized
+> *simulator* would need NVIDIA's separate `isaac-sim` image, not this one.
+
+Steps 1–2 (host) are required either way:
+
 ```bash
 # 1. NVIDIA driver — RTX GPU + driver (Isaac Sim 6.0)
 nvidia-smi                                   # confirm GPU + driver are live
@@ -74,7 +86,7 @@ cat ~/isaacsim/VERSION                       # expect 6.0.0-...  (assets in ~/is
 ~/isaacsim/python.sh -c "import isaacsim; print('isaacsim import OK')"
 ```
 
-### Docker (recommended) — ROS side in the `unige_legged` image
+### Docker (recommended, ROS side only) — the `unige_legged` image
 
 The `thanhnc19/unige_legged` image ships the entire ROS 2 side already built: **Jazzy + Nav2 +
 slam_toolbox + RGB-D perception incl. the YOLO detector + OctoMap/grid_map 3D mapping + the PDDL
