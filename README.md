@@ -63,34 +63,6 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 - `sar_scene.py` — shared SAR environment builder (walled room + multiple orange "victim" markers + a distractor, with `UsdSemantics` class labels); used by the live sim **and** the dataset generator.
 - `replicator_sar_sdg.py` — Phase 2 synthetic-data generator: NVIDIA Replicator renders randomized viewpoints → a labelled dataset (RGB + 2D bbox + semantic segmentation, classes `victim`/`distractor`) under `~/unige_ws/datasets/sar_victims/`. Trains a learned detector (YOLO) to replace the HSV first cut.
 
-## Helper scripts
-
-Two wrappers hide the environment footguns so you never invoke Isaac's `python.sh` or a raw
-`docker run` by hand.
-
-### `scripts/run_isaac.sh` — launch an Isaac Sim standalone app
-
-```bash
-./scripts/run_isaac.sh <script.py> [args...]
-# e.g.
-./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_smoke_test.py
-ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/replicator_sar_sdg.py --frames 200
-```
-
-What it does, in order: (1) `conda deactivate` (twice — the auto-activated `base` env's Python 3.13
-shadows ROS/Isaac); (2) source ROS 2 Jazzy + the `~/unige_ws` colcon overlay (so the in-process
-`rclpy` node and the `isaacsim.ros2.bridge` resolve `std_msgs` + `spot_sar_msgs`); (3) pin the real
-asset root and `ROS_DOMAIN_ID`; (4) resolve the script to an absolute path **before** `cd`-ing into
-`~/isaacsim`, then `exec ./python.sh` (Isaac's bundled Python 3.12, which matches Jazzy).
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `ISAAC_DIR` | `~/isaacsim` | Isaac Sim workstation install (where `python.sh` lives). |
-| `WS_DIR` | `~/unige_ws` | colcon workspace whose `install/setup.bash` is overlaid. |
-| `ROS_DOMAIN_ID` | `42` | DDS domain — must match every `ros2` CLI shell. |
-| `ISAAC_ASSETS` | `~/isaacsim_assets` | Real local asset root (the persistent config points at a stale `/home/isaac` path). |
-
 ## Installation
 
 ```bash
@@ -180,7 +152,7 @@ deactivate
 
 ```bash
 # 0. Once per shell: drop conda, source ROS + the workspace, pick the DDS domain.
-conda deactivate && source /opt/ros/jazzy/setup.bash
+source /opt/ros/jazzy/setup.bash
 cd ~/unige_ws && colcon build --symlink-install && source install/setup.bash
 export ROS_DOMAIN_ID=42      # SAME value in EVERY shell (sim + every ros2 CLI) or they can't see each other
 cd ~/unige_ws/src/quadruped_isaac_sim
@@ -216,41 +188,56 @@ ros2 launch spot_sar_bringup floor_mission.launch.py    # multi-room floor + ope
 > (cold Blackwell cache) and may sit on a black *"not responding"* window for ~1 min — click **Wait**, not
 > Force Quit. On 8 GB VRAM, prefer **headless + RViz** over the Isaac GUI.
 
-### Victims: human figures + YOLO (default), or boxes + HSV (opt-out)
+## Details
 
-By **default** the victims are **realistic Isaac People humans** detected by a **pretrained YOLOv8**
-(`person` class) running on CPU from `~/yolo_venv` — verified detecting a rendered Isaac human at
-**0.94** confidence, ~8 Hz. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
-overlay + `/victims/markers`); pick via launch args:
+## Helper scripts
+
+Two wrappers hide the environment footguns so you never invoke Isaac's `python.sh` or a raw
+`docker run` by hand.
+
+### `scripts/run_isaac.sh` — launch an Isaac Sim standalone app
 
 ```bash
-ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
-ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
+./scripts/run_isaac.sh <script.py> [args...]
+# e.g.
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_smoke_test.py
+ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
+    spot_sar_sim/spot_sar_sim/standalone/replicator_sar_sdg.py --frames 200
 ```
 
-`humans:=…` / `detector:=…` thread through `mapping` → `sar_system` → `mission`/`floor_mission`. The
-YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
-reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
-
-### Visualize in RViz
-
-`ros2 launch spot_sar_bringup rviz.launch.py` (Quick start step 4) opens RViz preloaded with
-`spot_sar_bringup/rviz/sar.rviz` (fixed frame `odom`) — run Isaac **headless** and watch the whole
-stack over ROS 2, lighter than the Isaac GUI and with no shader-compile freeze. Preloaded displays:
-
-| Display | Topic | Shows |
+| Env var | Default | Purpose |
 |---|---|---|
-| Camera RAW | `/camera/rgb/image_raw` | the raw RGB stream |
-| Detections | `/camera/rgb/detections` | RGB **+ green detection boxes** + confidence/range labels |
-| Victims | `/victims/markers` | 3D spheres at detected victim positions (in `odom`/`map`) |
-| LaserScan | `/scan` | the depth-derived lidar (mapping/mission) |
-| Map | `/map` | the slam_toolbox occupancy grid (mapping/mission) |
-| Global/Local Costmap | `/global_costmap/costmap`, `/local_costmap/costmap` | Nav2 costmaps (off by default — tick to enable) |
-| Nav2 Path | `/plan` | the planned path |
-| TF | — | the `odom→base_link→camera_*` frames |
+| `ISAAC_DIR` | `~/isaacsim` | Isaac Sim workstation install (where `python.sh` lives). |
+| `WS_DIR` | `~/unige_ws` | colcon workspace whose `install/setup.bash` is overlaid. |
+| `ROS_DOMAIN_ID` | `42` | DDS domain — must match every `ros2` CLI shell. |
+| `ISAAC_ASSETS` | `~/isaacsim_assets` | Real local asset root (the persistent config points at a stale `/home/isaac` path). |
 
-The detector publishes `/camera/rgb/detections` + `/victims/markers` **only when RViz subscribes**, so
-they cost nothing during headless autonomy runs. (RViz must share the sim's `ROS_DOMAIN_ID`.)
+### Isaac Sim environments
+
+Three SAR scenes ship in `spot_sar_sim/.../standalone/sar_scene.py`, picked by a flag on the
+standalone apps (all share the same victim markers / Isaac People + `UsdSemantics` labels):
+
+| Environment | Flag | Scene builder | What's in it |
+|---|---|---|---|
+| **Single room** (default) | *(none)* | `build_sar_scene()` | one walled room + orange victim markers + a distractor — the Phase 0–6 mission |
+| **3-room floor + doors** | `--floor` | `build_floor_scene()` | rooms A–B–C, divider walls with door gaps + sliding door slabs (PDDL `open-door`) |
+| **Two-floor building + stairwell** | `--building` | `build_two_floor_scene()` | two x-offset floors, floor-1 doors + a stairwell landing (PDDL `use-stairs`) |
+
+**Check a sim environment** — the no-ROS viewer (`spot_view_scene.py`) boots Isaac, loads the scene +
+Spot (standing) and renders it, so you can eyeball geometry/lighting before wiring any ROS. GUI on by
+default (needs `export DISPLAY=:0`); `--headless` just validates that the scene loads.
+
+```bash
+# quickest visual check of each environment (orbit with the mouse; Ctrl-C to quit):
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py             # single room
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --floor     # 3-room floor + doors
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --building  # two-floor building
+./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --headless  # load-only check, no window
+```
+
+The viewer is **static** — doors stay closed and the stair teleport is idle (it hosts no ROS bus). To
+*drive* the doors/stairs, use the ROS apps in the sections below (`spot_perception_app.py --floor` /
+`--building`).
 
 ## Multi-room floor with openable doors (PDDL `open-door`)
 
@@ -338,7 +325,43 @@ two-floor mission (`open-door` + `use-stairs` + reports both floors); the **tele
 constant while z jumps ±3 m** and Spot stands stably on floor 2; and the executive's building profile
 dispatches `climb_stairs("stair_main up")`.
 
-## 3D mapping — OctoMap voxels + elevation map for the stairs
+### Victims: human figures + YOLO (default), or boxes + HSV (opt-out)
+
+By **default** the victims are **realistic Isaac People humans** detected by a **pretrained YOLOv8**
+(`person` class) running on CPU from `~/yolo_venv` — verified detecting a rendered Isaac human at
+**0.94** confidence, ~8 Hz. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
+overlay + `/victims/markers`); pick via launch args:
+
+```bash
+ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
+ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
+```
+
+`humans:=…` / `detector:=…` thread through `mapping` → `sar_system` → `mission`/`floor_mission`. The
+YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
+reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
+
+### Visualize in RViz
+
+`ros2 launch spot_sar_bringup rviz.launch.py` (Quick start step 4) opens RViz preloaded with
+`spot_sar_bringup/rviz/sar.rviz` (fixed frame `odom`) — run Isaac **headless** and watch the whole
+stack over ROS 2, lighter than the Isaac GUI and with no shader-compile freeze. Preloaded displays:
+
+| Display | Topic | Shows |
+|---|---|---|
+| Camera RAW | `/camera/rgb/image_raw` | the raw RGB stream |
+| Detections | `/camera/rgb/detections` | RGB **+ green detection boxes** + confidence/range labels |
+| Victims | `/victims/markers` | 3D spheres at detected victim positions (in `odom`/`map`) |
+| LaserScan | `/scan` | the depth-derived lidar (mapping/mission) |
+| Map | `/map` | the slam_toolbox occupancy grid (mapping/mission) |
+| Global/Local Costmap | `/global_costmap/costmap`, `/local_costmap/costmap` | Nav2 costmaps (off by default — tick to enable) |
+| Nav2 Path | `/plan` | the planned path |
+| TF | — | the `odom→base_link→camera_*` frames |
+
+The detector publishes `/camera/rgb/detections` + `/victims/markers` **only when RViz subscribes**, so
+they cost nothing during headless autonomy runs. (RViz must share the sim's `ROS_DOMAIN_ID`.)
+
+### 3D mapping — OctoMap voxels + elevation map for the stairs
 
 The 2D SLAM map is complemented by two **3D** maps, run *alongside* a live sim (they consume the
 RGB-D camera). Both are in `mapping3d.launch.py`; the shared input is a camera **point cloud**
