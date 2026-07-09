@@ -91,32 +91,9 @@ asset root and `ROS_DOMAIN_ID`; (4) resolve the script to an absolute path **bef
 | `ROS_DOMAIN_ID` | `42` | DDS domain — must match every `ros2` CLI shell. |
 | `ISAAC_ASSETS` | `~/isaacsim_assets` | Real local asset root (the persistent config points at a stale `/home/isaac` path). |
 
-### `docker/run_unige_docker.sh` — start the ROS-side container
-
-Isaac Sim stays on the **host**; this runs the `thanhnc19/unige_legged` image (Nav2, slam_toolbox,
-perception, planner) with this repo bind-mounted and host networking, so its nodes discover the
-Isaac ROS 2 bridge over DDS.
-
-```bash
-./docker/run_unige_docker.sh                                   # interactive shell in the container
-CMD="ros2 launch spot_sar_bringup perception.launch.py" \
-    ./docker/run_unige_docker.sh                               # run one command, then exit
-```
-
-It mounts the repo at `/opt/unige_ws/src/quadruped_isaac_sim` (build/install stay container-side),
-adds `--gpus all` when `nvidia-smi` is present, and shares `--net=host --ipc=host` + `ROS_DOMAIN_ID`
-+ the X11 socket. Override `IMAGE`, `TAG`, `ROS_DOMAIN_ID`, or `CMD` via env vars. Build/push the
-image with `docker/build_docker.sh` / `docker/push_docker.sh`; see [docker/README.md](docker/README.md).
-
 ## Installation
 
-Two things always install on the **host** — Docker can't provide them, because the GPU driver and
-Isaac Sim are bound to the machine. For the **ROS side** (Nav2, slam_toolbox, perception, PDDL
-planner) pick **one** path: the prebuilt **Docker** image (recommended — nothing to install) or a
-**native** install.
-
 ```bash
-# HOST prerequisites — required for BOTH paths
 # 1. NVIDIA driver — RTX GPU + driver >= 535.129.03 (Isaac Sim 6.0 floor; 580 verified here)
 nvidia-smi                                   # confirm GPU + driver are live
 
@@ -142,9 +119,19 @@ docker pull thanhnc19/unige_legged            # or ./docker/build_docker.sh to b
 Isaac Sim stays on the host; it and the container share `ROS_DOMAIN_ID=42` + host networking, so the
 container's nodes discover the Isaac ROS 2 bridge over DDS. See [docker/README.md](docker/README.md).
 
-> **YOLO caveat.** The image does **not** include the learned detector (`torch`/`ultralytics`/weights) —
-> only the HSV path works inside the container. Run perception with `humans:=false detector:=hsv`, or
-> for YOLO either run perception natively (venv step 6 below) or extend the image with that venv.
+**YOLO in the container (opt-in).** The default image omits the learned detector
+(`torch`/`ultralytics`/weights, ~2–3 GB), so out of the box run perception with the HSV path
+(`humans:=false detector:=hsv`). To bake YOLO in, rebuild with `WITH_YOLO=1` — the Dockerfile then
+creates `~/yolo_venv` (= `/root/yolo_venv`, exactly where `perception.launch.py` looks) with CPU
+torch + ultralytics + the pinned `yolov8n.pt`, numpy pinned to 1.26.4 to match the ROS ABI:
+
+```bash
+WITH_YOLO=1 ./docker/build_docker.sh          # build the image with the YOLO venv baked in
+./docker/run_unige_docker.sh                  # then perception's default humans+YOLO path works in-container
+```
+
+(A runtime `pip install` in a running container is lost — `run_unige_docker.sh` uses `--rm` — so the
+venv belongs in the image, hence the build flag.)
 
 ### Native install — ROS side on the host
 

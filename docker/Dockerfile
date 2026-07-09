@@ -81,6 +81,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
+# 3c. OPTIONAL learned detector — YOLOv8 venv at /root/yolo_venv (= ~/yolo_venv,
+#     exactly where perception.launch.py looks; the container runs as root).
+#     OFF by default — CPU torch + ultralytics add ~2-3 GB. Enable at build time:
+#         WITH_YOLO=1 ./docker/build_docker.sh
+#         docker build --build-arg WITH_YOLO=1 -f docker/Dockerfile docker/
+#     Mirrors the host ~/yolo_venv: numpy PINNED to 1.26.4 so cv_bridge's ABI
+#     holds against torch/opencv (else numpy 2.x → "multiarray failed to import").
+# -----------------------------------------------------------------------------
+ARG WITH_YOLO=0
+ENV YOLO_VENV=/root/yolo_venv
+RUN if [ "$WITH_YOLO" = "1" ]; then \
+        echo ">> WITH_YOLO=1 — building ${YOLO_VENV} (CPU torch + ultralytics + YOLOv8n weights)" && \
+        python3 -m venv --system-site-packages "${YOLO_VENV}" && \
+        source "${YOLO_VENV}/bin/activate" && \
+        pip install --no-cache-dir --upgrade pip && \
+        pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+        pip install --no-cache-dir ultralytics && \
+        pip install --no-cache-dir "numpy==1.26.4" "opencv-python==4.9.0.80" && \
+        ( cd "${YOLO_VENV}" && python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" ) && \
+        python -c "import torch, ultralytics, numpy; print('YOLO venv OK: torch', torch.__version__, '| numpy', numpy.__version__)" && \
+        deactivate ; \
+    else \
+        echo ">> WITH_YOLO=0 — skipping YOLO venv; run perception with detector:=hsv inside the container" ; \
+    fi
+
+# -----------------------------------------------------------------------------
 # 4. Workspace mount point + shell setup. The colcon workspace is mounted here at
 #    run time; sourcing install/setup.bash is a no-op until you build it once.
 # -----------------------------------------------------------------------------

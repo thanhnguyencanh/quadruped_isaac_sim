@@ -38,6 +38,8 @@ newgrp docker          # apply to the current shell (or log out/in)
 ```bash
 # 1. Build (~ROS 2 Jazzy desktop + Nav2 + planner; first build is slow)
 ./docker/build_docker.sh
+#    ...or bake in the learned YOLO detector venv (~/yolo_venv, +~2-3 GB CPU torch):
+WITH_YOLO=1 ./docker/build_docker.sh
 
 # 2. Push to Docker Hub (needs `docker login -u thanhnc19`)
 ./docker/push_docker.sh
@@ -59,3 +61,7 @@ Override the name/tag with `IMAGE=` / `TAG=`; run a one-shot command with
   `source /opt/sar_planning_venv/bin/activate` to use Fast Downward / ENHSP.
 - GPU flags (`--gpus all`) are added automatically when `nvidia-smi` is present (only needed
   if you run GPU ROS nodes in the container; Isaac itself is on the host).
+- **Learned detector (YOLO) is opt-in.** The default image ships only the HSV victim detector, so
+  run perception with `humans:=false detector:=hsv`. To use the pretrained YOLOv8 path, rebuild with
+  `WITH_YOLO=1 ./docker/build_docker.sh` — that creates `~/yolo_venv` (`/root/yolo_venv`, where
+  `perception.launch.py` looks) with CPU torch + ultralytics + `yolov8n.pt`, numpy pinned to 1.26.4.
