@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(_REPO, "spot_sar_planning", "spot_sar_planning")
 from isaacsim import SimulationApp
 
 parser = argparse.ArgumentParser(description="Spot RGB-D camera + ROS 2 perception app")
-parser.add_argument("--gui", action="store_true", help="show the GUI window (default headless)")
+parser.add_argument("--headless", action="store_true", help="run without the GUI window (default: GUI)")
 parser.add_argument("--floor", action="store_true",
                     help="build the multi-room floor (walls + openable doors) instead of the single room")
 parser.add_argument("--building", action="store_true",
@@ -68,7 +68,7 @@ args, _ = parser.parse_known_args()
 # Rendering MUST run for the camera render product to produce images; headless only drops the
 # GUI window, not the renderer. Keep the swapchain modest (8 GB VRAM tier).
 simulation_app = SimulationApp(
-    {"headless": not args.gui, "width": 640, "height": 480, "renderer": "RayTracedLighting"}
+    {"headless": args.headless, "width": 640, "height": 480, "renderer": "RayTracedLighting"}
 )
 
 import carb

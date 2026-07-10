@@ -34,12 +34,12 @@ import os
 from isaacsim import SimulationApp
 
 parser = argparse.ArgumentParser(description="Spot /cmd_vel ROS 2 bridge app")
-parser.add_argument("--gui", action="store_true", help="show the GUI window (default headless)")
+parser.add_argument("--headless", action="store_true", help="run without the GUI window (default: GUI)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
 
-simulation_app = SimulationApp({"headless": not args.gui, "width": 1280, "height": 720})
+simulation_app = SimulationApp({"headless": args.headless, "width": 1280, "height": 720})
 
 import carb
 

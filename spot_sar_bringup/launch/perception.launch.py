@@ -10,7 +10,7 @@
   * detector_node — HSV+depth victim detection publishing /victims (use_sim_time:=true).
 
 Args:
-  gui:=true            show the Isaac Sim window (default headless)
+  gui:=false           hide the Isaac Sim window (default: GUI shown; headless for CI/low-VRAM runs)
   domain_id:=42        ROS_DOMAIN_ID for the whole system
   repo:=<path>         path to this repo (default: the workspace src checkout)
   run_detector:=false  bring up the sim + TFs only, skip the detector
@@ -50,8 +50,8 @@ def _launch(context, *args, **kwargs):
     run_isaac = os.path.join(repo, "scripts", "run_isaac.sh")
     app = os.path.join(repo, "spot_sar_sim", "spot_sar_sim", "standalone", "spot_perception_app.py")
     cmd = [run_isaac, app]
-    if gui:
-        cmd.append("--gui")
+    if not gui:
+        cmd.append("--headless")
     if building:
         cmd.append("--building")  # two-floor building (x-offset wings + stacked stair landing)
     elif floor:
@@ -63,9 +63,10 @@ def _launch(context, *args, **kwargs):
         ExecuteProcess(
             cmd=cmd,
             output="screen",
+            # NOTE: no ISAAC_ASSETS pin — run_isaac.sh uses the local pack if present, else
+            # falls back to NVIDIA's cloud assets (a hardcoded local dir crashes fresh machines).
             additional_env={
                 "ROS_DOMAIN_ID": domain_id,
-                "ISAAC_ASSETS": os.path.expanduser("~/isaacsim_assets"),
             },
         ),
         # base_link -> camera_link : rigid mount (matches the prim translate in the app)
@@ -117,7 +118,7 @@ def _launch(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription(
         [
-            DeclareLaunchArgument("gui", default_value="false"),
+            DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("floor", default_value="false"),
             DeclareLaunchArgument("building", default_value="false",
                                   description="two-floor building (stairs) instead of the single room / floor"),

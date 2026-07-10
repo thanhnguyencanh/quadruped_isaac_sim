@@ -154,13 +154,13 @@ export DISPLAY=:0            # your desktop X display — run `echo $DISPLAY` in
 ./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py            # single room
 ./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_view_scene.py --floor    # 3-room floor + doors
 
-# 3. Phase 1 — drive Spot from ROS 2 /cmd_vel (headless; append --gui for the Isaac window)
+# 3. Phase 1 — drive Spot from ROS 2 /cmd_vel (GUI by default; append --headless to drop the window)
 ./scripts/run_isaac.sh spot_sar_sim/spot_sar_sim/standalone/spot_cmd_vel_app.py
 #   another shell, SAME ROS_DOMAIN_ID=42 — drive Spot:
 #     ros2 run spot_sar_sim teleop_keyboard                                       # WASD teleop (w/s a/d q/e, space=stop)
 #     ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.6}}'  # or a one-shot publish
 
-# 4. Phase 2 — RGB-D camera + victim detector (headless)
+# 4. Phase 2 — RGB-D camera + victim detector (GUI by default; gui:=false for headless)
 ros2 launch spot_sar_bringup perception.launch.py
 #   visualize EVERYTHING in RViz (another shell, SAME domain) — raw + detection image, /victims, /scan, /map:
 #     ros2 launch spot_sar_bringup rviz.launch.py
@@ -172,9 +172,9 @@ ros2 launch spot_sar_bringup floor_mission.launch.py    # multi-room floor + ope
 
 > **Two recurring gotchas.** (1) Every shell — the Isaac app **and** every `ros2` command — must export the
 > **same `ROS_DOMAIN_ID`** (this project uses **42**), or DDS can't connect them and Spot just stands still
-> (`echo $ROS_DOMAIN_ID` in both shells must match). (2) The first **`--gui`** launch compiles RTX shaders
-> (cold Blackwell cache) and may sit on a black *"not responding"* window for ~1 min — click **Wait**, not
-> Force Quit. On 8 GB VRAM, prefer **headless + RViz** over the Isaac GUI.
+> (`echo $ROS_DOMAIN_ID` in both shells must match). (2) The first GUI launch (the default) compiles RTX
+> shaders (cold cache) and may sit on a black *"not responding"* window for ~1 min — click **Wait**, not
+> Force Quit. On small (≤8 GB) GPUs, prefer **headless + RViz** (`--headless` / `gui:=false`) over the Isaac GUI.
 
 ## Details
 
@@ -243,7 +243,7 @@ drive/inspect the floor by hand, run the app with `--floor` and command doors on
 
 ```bash
 ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor       # add --gui to watch
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --floor       # GUI by default (+--headless to drop it)
 ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: door_bc}'          # open  (bare id = open)
 ros2 topic pub --once /door_cmd std_msgs/msg/String '{data: "door_bc close"}'  # close
 ros2 topic echo /door_states   # "<id> open" | "<id> closed" once the slab arrives (latched)
@@ -300,7 +300,7 @@ floor-2 victim. To drive/inspect by hand, run the app with `--building` and comm
 
 ```bash
 ROS_DOMAIN_ID=42 ./scripts/run_isaac.sh \
-    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --building --spawn 10.5 0 0.8   # +--gui to watch
+    spot_sar_sim/spot_sar_sim/standalone/spot_perception_app.py --building --spawn 10.5 0 0.8   # GUI by default
 ros2 topic pub --once /stairs_cmd std_msgs/msg/String '{data: "stair_main up"}'    # teleport to floor 2
 ros2 topic pub --once /stairs_cmd std_msgs/msg/String '{data: "stair_main down"}'  # back to floor 1
 ros2 topic echo /floor_state   # "f1" | "f2" once Spot arrives (latched)
@@ -420,8 +420,9 @@ a generated problem inside the planning venv.
 ### Visualize in RViz
 
 `ros2 launch spot_sar_bringup rviz.launch.py` (Quick start step 4) opens RViz preloaded with
-`spot_sar_bringup/rviz/sar.rviz` (fixed frame `odom`) — run Isaac **headless** and watch the whole
-stack over ROS 2, lighter than the Isaac GUI and with no shader-compile freeze. Preloaded displays:
+`spot_sar_bringup/rviz/sar.rviz` (fixed frame `odom`) — optionally run Isaac **headless**
+(`--headless` / `gui:=false`) and watch the whole stack over ROS 2, lighter than the Isaac GUI and
+with no shader-compile freeze. Preloaded displays:
 
 | Display | Topic | Shows |
 |---|---|---|

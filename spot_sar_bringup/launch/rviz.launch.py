@@ -1,7 +1,7 @@
 """rviz.launch.py — open RViz2 preloaded with the SAR visualization config.
 
-Pairs with a HEADLESS Isaac run: bring the sim up without --gui (lighter on 8 GB VRAM, no
-shader-compile freeze) and visualize everything here over ROS 2 — raw camera, the detection
+Pairs well with a HEADLESS Isaac run (gui:=false / --headless — lighter on VRAM, no
+shader-compile freeze): visualize everything here over ROS 2 — raw camera, the detection
 overlay, /scan, /map, Nav2 costmaps/path, victim markers, and TF.
 
   ros2 launch spot_sar_bringup rviz.launch.py            # default config (config/sar.rviz)
