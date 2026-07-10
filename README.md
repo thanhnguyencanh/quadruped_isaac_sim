@@ -355,9 +355,16 @@ ros2 topic echo --once /plan             # the planned path
 
 ### Check perception and world model
 
+**Victims: human figures + YOLO (default), or boxes + HSV (opt-out).** By default the victims are
+**realistic Isaac People humans** detected by a **pretrained YOLOv8** (`person` class, no finetuning)
+running on CPU from `~/yolo_venv`. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
+overlay + `/victims/markers`); pick via launch args — `humans:=…` / `detector:=…` thread through
+`mapping` → `sar_system` → `mission`/`floor_mission`:
+
 ```bash
-ros2 launch spot_sar_bringup perception.launch.py     # Isaac camera app + victim detector
-#   + building:=true (two-floor scene)  |  detector:=hsv humans:=false (orange boxes, no venv)
+ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
+ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
+#   + building:=true for the two-floor scene
 ```
 Perception:
 ```bash
@@ -368,9 +375,12 @@ World model (symbol grounding — comes up with `mapping.launch.py` / `mission.l
 ```bash
 ros2 topic echo --once /world_model      # world_model_node: rooms + grounded victims (spot_sar_msgs/WorldModel)
 ```
-**Pass:** `/victims` populates when Spot faces a victim (YOLO detects the Isaac human as `person`,
-~0.94 conf, ~8 Hz) and `/world_model` reflects the grounded rooms/victims. In `rviz.launch.py` the
-**Detections** overlay (green boxes) + **Victims** markers appear.
+**Pass:** `/victims` populates when Spot faces a victim (YOLO detects the Isaac human as `person` —
+verified at **0.94** confidence, ~8 Hz) and `/world_model` reflects the grounded rooms/victims. In
+`rviz.launch.py` the **Detections** overlay (green boxes) + **Victims** markers appear.
+
+The YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
+reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
 
 ### Check PDDL planning and task executive
 
@@ -385,22 +395,6 @@ dispatches skills (`go_to_location`→Nav2, `observe`, `report`), and autonomous
 to → REPORTS** victims, replanning each cycle. (The executive runs under `~/sar_planning_venv`; the
 `unige_legged` container ships it.) Offline PDDL sanity (no Isaac): the planner solves `domain.pddl` +
 a generated problem inside the planning venv.
-
-### Victims: human figures + YOLO (default), or boxes + HSV (opt-out)
-
-By **default** the victims are **realistic Isaac People humans** detected by a **pretrained YOLOv8**
-(`person` class) running on CPU from `~/yolo_venv` — verified detecting a rendered Isaac human at
-**0.94** confidence, ~8 Hz. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
-overlay + `/victims/markers`); pick via launch args:
-
-```bash
-ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
-ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
-```
-
-`humans:=…` / `detector:=…` thread through `mapping` → `sar_system` → `mission`/`floor_mission`. The
-YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
-reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
 
 ### Visualize in RViz
 
