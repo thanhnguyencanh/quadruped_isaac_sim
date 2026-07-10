@@ -65,16 +65,6 @@ unige_ws/                      # colcon workspace (build/ install/ log/ live her
 
 ## Installation
 
-> **⚠️ Two halves that run in two places — read this first (it's the #1 point of confusion).**
-> Isaac Sim (the **simulator**: `spot_view_scene.py` and every `spot_*` standalone app) runs on the
-> **HOST**. The **ROS 2 side** (Nav2, SLAM, perception, planner, executive) runs in **Docker** — *or*
-> natively on the host. They connect over DDS (`ROS_DOMAIN_ID=42`, host networking).
->
-> **You cannot run the simulator in the `unige_legged` container.** Isaac Sim (~25 GB, GPU) is *not
-> in that image*, so `run_isaac.sh` inside the container fails with `cd: /root/isaacsim: No such file
-> or directory`. So "**Docker (recommended)**" below means the **ROS side only** — a containerized
-> *simulator* would need NVIDIA's separate `isaac-sim` image, not this one.
-
 Steps 1–2 (host) are required either way:
 
 ```bash
@@ -332,7 +322,7 @@ two-floor mission (`open-door` + `use-stairs` + reports both floors); the **tele
 constant while z jumps ±3 m** and Spot stands stably on floor 2; and the executive's building profile
 dispatches `climb_stairs("stair_main up")`.
 
-### Check SLAM, motion planning, path planning and navigation
+### Check SLAM (2D + 3D mapping), path planning and navigation
 
 `sar_system.launch.py` is the full nav stack **without** the executive (Isaac + camera + `depth→/scan`
 + `slam_toolbox` + Nav2), so you can send a goal by hand and watch Spot drive to it:
@@ -352,6 +342,37 @@ ros2 topic echo --once /plan             # the planned path
 ```
 **Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:
 `ros2 launch spot_sar_bringup rviz.launch.py`, then drop a **2D Goal Pose** and watch `/map`, `/plan`, and the robot move.
+
+**3D mapping — OctoMap voxels + elevation map for the stairs.** The 2D SLAM map is complemented by
+two **3D** maps, run *alongside* a live sim (they consume the RGB-D camera). Both are in
+`mapping3d.launch.py`; the shared input is a camera **point cloud** (`depth_image_proc` →
+`/camera/points`, already installed):
+
+| Map | Node | Output | RViz |
+|---|---|---|---|
+| **3D voxel (OctoMap)** | `octomap_server` (apt) | `/octomap_full` + `/octomap_point_cloud_centers` + projected `/projected_map` | voxel boxes coloured by height — the two floors show up at z≈0 and z≈3 |
+| **3D elevation (stairs)** | leggedrobotics `elevation_mapping_cupy` (GPU/CuPy) | `/elevation_mapping_node/elevation_map` (`grid_map_msgs/GridMap`) | `grid_map_rviz_plugin` renders the `elevation` layer as a 3D surface — the steps as a height field |
+
+```bash
+# one-time install (needs sudo + internet; the unige_legged Docker image ships the OctoMap stack):
+./scripts/setup_3d_mapping.sh octomap      # stage A: OctoMap + grid_map (apt) — GPU-free, low risk
+./scripts/setup_3d_mapping.sh elevation    # stage B: elevation_mapping_cupy (source build + CuPy)
+
+# then, with a --building sim running (e.g. building_mission.launch.py or perception.launch.py building:=true):
+ros2 launch spot_sar_bringup mapping3d.launch.py                     # point cloud + OctoMap
+ros2 launch spot_sar_bringup mapping3d.launch.py elevation:=true     # + elevation_mapping_cupy
+ros2 launch spot_sar_bringup rviz.launch.py rviz_config:=$(ros2 pkg prefix spot_sar_bringup)/share/spot_sar_bringup/rviz/sar_3d.rviz
+```
+**Pass:** `/camera/points` streams and `/octomap_point_cloud_centers` fills in as Spot's camera looks
+around — the two storeys appear as separate voxel bands at z≈0 and z≈3.
+
+- **OctoMap** is the reliable, GPU-free 3D map — apt install and go. Point Spot's camera around and the
+  octree fills in (the pure-z teleport keeps odom coherent, so the octree stays consistent across floors).
+- **elevation_mapping_cupy** is the faithful leggedrobotics stack for the stairs, but it is a ROS 2
+  **dev-branch source build** + **CuPy on the GPU**. It shares the VRAM with the Isaac RTX renderer →
+  real OOM risk on small GPUs; if it won't co-run, keep OctoMap (which already captures the stairs as
+  voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
+  a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
 
 ### Check perception and world model
 
@@ -416,33 +437,3 @@ stack over ROS 2, lighter than the Isaac GUI and with no shader-compile freeze. 
 The detector publishes `/camera/rgb/detections` + `/victims/markers` **only when RViz subscribes**, so
 they cost nothing during headless autonomy runs. (RViz must share the sim's `ROS_DOMAIN_ID`.)
 
-### 3D mapping — OctoMap voxels + elevation map for the stairs
-
-The 2D SLAM map is complemented by two **3D** maps, run *alongside* a live sim (they consume the
-RGB-D camera). Both are in `mapping3d.launch.py`; the shared input is a camera **point cloud**
-(`depth_image_proc` → `/camera/points`, already installed):
-
-| Map | Node | Output | RViz |
-|---|---|---|---|
-| **3D voxel (OctoMap)** | `octomap_server` (apt) | `/octomap_full` + `/octomap_point_cloud_centers` + projected `/projected_map` | voxel boxes coloured by height — the two floors show up at z≈0 and z≈3 |
-| **3D elevation (stairs)** | leggedrobotics `elevation_mapping_cupy` (GPU/CuPy) | `/elevation_mapping_node/elevation_map` (`grid_map_msgs/GridMap`) | `grid_map_rviz_plugin` renders the `elevation` layer as a 3D surface — the steps as a height field |
-
-```bash
-# one-time install (needs sudo + internet):
-./scripts/setup_3d_mapping.sh octomap      # stage A: OctoMap + grid_map (apt) — GPU-free, low risk
-./scripts/setup_3d_mapping.sh elevation    # stage B: elevation_mapping_cupy (source build + CuPy)
-
-# then, with a --building sim running (e.g. building_mission.launch.py or perception.launch.py building:=true):
-ros2 launch spot_sar_bringup mapping3d.launch.py                     # point cloud + OctoMap
-ros2 launch spot_sar_bringup mapping3d.launch.py elevation:=true     # + elevation_mapping_cupy
-ros2 launch spot_sar_bringup rviz.launch.py rviz_config:=$(ros2 pkg prefix spot_sar_bringup)/share/spot_sar_bringup/rviz/sar_3d.rviz
-```
-
-- **OctoMap** is the reliable, GPU-free 3D map — apt install and go. Point Spot's camera around and the
-  octree fills in; the two storeys appear as separate voxel bands (the pure-z teleport keeps odom
-  coherent, so the octree stays consistent across floors).
-- **elevation_mapping_cupy** is the faithful leggedrobotics stack for the stairs, but it is a ROS 2
-  **dev-branch source build** + **CuPy on the GPU**. It shares the **8 GB VRAM with the Isaac RTX
-  renderer** → real OOM risk; if it won't co-run, keep OctoMap (which already captures the stairs as
-  voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
-  a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
