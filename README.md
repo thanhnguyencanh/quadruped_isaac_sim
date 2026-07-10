@@ -188,7 +188,7 @@ ros2 launch spot_sar_bringup floor_mission.launch.py    # multi-room floor + ope
 
 ## Details
 
-## Helper scripts
+### Helper scripts
 
 Two wrappers hide the environment footguns so you never invoke Isaac's `python.sh` or a raw
 `docker run` by hand.
@@ -239,7 +239,7 @@ The viewer is **static** — doors stay closed and the stair teleport is idle (i
 *drive* the doors/stairs, use the ROS apps in the sections below (`spot_perception_app.py --floor` /
 `--building`).
 
-## Multi-room floor with openable doors (PDDL `open-door`)
+#### Multi-room floor with openable doors (PDDL `open-door`)
 
 A more complex environment: a floor of **3 rooms (A–B–C)** separated by walls and connected by
 **doors**, with victims behind them. The PDDL planner must dispatch an **`open-door`** action — which
@@ -274,7 +274,7 @@ Verified component-by-component: the PDDL gating (`open-door` before `move`), th
 doors-profile planning, the slab physically opening on `/door_cmd`, and the grounding reflecting the
 live door state.
 
-## Two-floor building with a stairwell (PDDL `use-stairs`)
+#### Two-floor building with a stairwell (PDDL `use-stairs`)
 
 The third environment: a **two-storey building** — three rooms per floor, victims on **both floors**,
 joined by a **stairwell**. The planner must dispatch a **`use-stairs`** action (the floor analogue of
@@ -331,6 +331,60 @@ Verified component-by-component (feasibility-gated before the heavy run): PDDL s
 two-floor mission (`open-door` + `use-stairs` + reports both floors); the **teleport keeps odom x,y
 constant while z jumps ±3 m** and Spot stands stably on floor 2; and the executive's building profile
 dispatches `climb_stairs("stair_main up")`.
+
+### Check SLAM, motion planning, path planning and navigation
+
+`sar_system.launch.py` is the full nav stack **without** the executive (Isaac + camera + `depth→/scan`
++ `slam_toolbox` + Nav2), so you can send a goal by hand and watch Spot drive to it:
+
+```bash
+ros2 launch spot_sar_bringup sar_system.launch.py     # Isaac + SLAM + Nav2 (heavy; run on a fresh boot)
+```
+Then, in another shell (`export ROS_DOMAIN_ID=42`):
+```bash
+ros2 topic hz  /scan                     # ~48 Hz depth-derived lidar (SLAM input)
+ros2 topic echo --once /map              # slam_toolbox occupancy grid → SLAM works
+ros2 run tf2_ros tf2_echo map odom       # the map→odom transform is live
+# path planning + navigation — send a Nav2 goal, watch Spot walk there:
+ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 2.0, y: 0.0}, orientation: {w: 1.0}}}}"
+ros2 topic echo --once /plan             # the planned path
+```
+**Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:
+`ros2 launch spot_sar_bringup rviz.launch.py`, then drop a **2D Goal Pose** and watch `/map`, `/plan`, and the robot move.
+
+### Check perception and world model
+
+```bash
+ros2 launch spot_sar_bringup perception.launch.py     # Isaac camera app + victim detector
+#   + building:=true (two-floor scene)  |  detector:=hsv humans:=false (orange boxes, no venv)
+```
+Perception:
+```bash
+ros2 topic hz  /camera/rgb/image_raw     # ~25 Hz (640×480, camera_optical_frame)
+ros2 topic echo /victims                 # spot_sar_msgs/VictimArray — detections with range
+```
+World model (symbol grounding — comes up with `mapping.launch.py` / `mission.launch.py`):
+```bash
+ros2 topic echo --once /world_model      # world_model_node: rooms + grounded victims (spot_sar_msgs/WorldModel)
+```
+**Pass:** `/victims` populates when Spot faces a victim (YOLO detects the Isaac human as `person`,
+~0.94 conf, ~8 Hz) and `/world_model` reflects the grounded rooms/victims. In `rviz.launch.py` the
+**Detections** overlay (green boxes) + **Victims** markers appear.
+
+### Check PDDL planning and task executive
+
+The full closed loop — the planner solving + the executive driving Nav2:
+
+```bash
+ros2 launch spot_sar_bringup mission.launch.py        # single-room (also floor_/building_mission.launch.py)
+```
+**Pass:** the executive log runs the **SENSE→GROUND→PLAN→ACT→MONITOR→REPLAN** loop — Fast Downward
+solves `spot_sar_planning/pddl/domain.pddl` from a `/world_model`-derived problem, the executive
+dispatches skills (`go_to_location`→Nav2, `observe`, `report`), and autonomously **detects → navigates
+to → REPORTS** victims, replanning each cycle. (The executive runs under `~/sar_planning_venv`; the
+`unige_legged` container ships it.) Offline PDDL sanity (no Isaac): the planner solves `domain.pddl` +
+a generated problem inside the planning venv.
 
 ### Victims: human figures + YOLO (default), or boxes + HSV (opt-out)
 
@@ -398,22 +452,3 @@ ros2 launch spot_sar_bringup rviz.launch.py rviz_config:=$(ros2 pkg prefix spot_
   renderer** → real OOM risk; if it won't co-run, keep OctoMap (which already captures the stairs as
   voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
   a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
-
-## Machine-specific footguns (handled by `scripts/run_isaac.sh` + the apps)
-
-1. **conda `base` auto-activates** (Python 3.13) and shadows ROS/Isaac → always `conda deactivate` first.
-2. **Stale asset root**: Isaac's persistent config points at a Docker path `/home/isaac/...`. Real
-   assets are `~/isaacsim_assets`; the apps pin `persistent.isaac.asset_root.default` at startup.
-3. **Stale Kit cache** (`${omni_cache}` → `/home/isaac/...`, not writable here): the apps redirect it
-   to `~/.cache/isaacsim_omni_cache` so OGN node generation persists (else the ROS 2 bridge
-   intermittently hangs at startup).
-4. **8 GB VRAM** is the *minimum* tier — keep render resolution low and add sensors one at a time.
-5. **First-run RTX shader compilation is slow** (cold Blackwell cache); locomotion dev uses the
-   physics-only path (`world.step(render=False)`) to skip it entirely.
-6. **Camera needs rendering ON** — `spot_perception_app.py` must run the RTX render path (a render
-   product produces no image in the physics-only mode used for locomotion). Keep one camera at
-   640×480 with the render decoupled (~25 Hz) to fit the 8 GB VRAM budget.
-7. **Isaac camera optical frame** — Isaac's USD camera looks down its local −Z, but the bridge
-   publishes pixels + intrinsics in the ROS optical convention (z-fwd, x-right, y-down). Images
-   are stamped `camera_optical_frame`; the `camera_link→camera_optical_frame` leg is a REP-103
-   static TF (launch). Validate with `ros2 run tf2_ros tf2_echo base_link camera_optical_frame`.
