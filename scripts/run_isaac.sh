@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 # run_isaac.sh — launch an Isaac Sim standalone Python script with the right environment.
-#
-# Handles the three recurring footguns on this machine:
-#   1. conda `base` auto-activates (Python 3.13) and shadows everything → deactivate it.
-#   2. Isaac Sim must be run with its OWN bundled Python via python.sh (3.12, matches Jazzy).
-#   3. ROS 2 Jazzy + the colcon overlay must be sourced BEFORE launch so the in-process
-#      rclpy node and the isaacsim.ros2.bridge can resolve std + spot_sar_msgs messages.
-#
-# Usage:  run_isaac.sh <script.py> [args...]
-# NOTE: no `set -u` — ROS 2 setup.bash references unbound vars (AMENT_TRACE_SETUP_FILES).
+
 set -eo pipefail
 
 ISAAC_DIR="${ISAAC_DIR:-$HOME/isaacsim}"
