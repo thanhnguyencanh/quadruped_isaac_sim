@@ -378,6 +378,25 @@ ros2 topic echo --once /plan             # the planned path
 **Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:
 `ros2 launch spot_sar_bringup rviz.launch.py`, then drop a **2D Goal Pose** and watch `/map`, `/plan`, and the robot move.
 
+**Exploration + skills (Phase 4).** Neither node is auto-started by `sar_system.launch.py`, so each
+can be checked in isolation on top of it (every shell on `ROS_DOMAIN_ID=42`):
+
+```bash
+# frontier EXPLORATION — fully autonomous coverage, no goals from you:
+ros2 run spot_sar_nav frontier_explorer --ros-args -p use_sim_time:=true
+#   pass: Spot drives itself frontier-to-frontier, /map grows in RViz, log ends with "no frontiers"
+
+# SKILLS — the /skill action the executive dispatches (schema: {skill, target} -> {success, message}):
+ros2 run spot_sar_nav skill_server --ros-args -p use_sim_time:=true      # its own shell
+ros2 action send_goal /skill spot_sar_msgs/action/Skill "{skill: explore, target: ''}" --feedback
+ros2 action send_goal /skill spot_sar_msgs/action/Skill "{skill: observe, target: ''}"
+ros2 action send_goal /skill spot_sar_msgs/action/Skill "{skill: go_to_location, target: L_1_0}"
+```
+
+`explore`/`observe` are self-contained (`/map` frontiers, `/victims` dwell). **`go_to_location` needs
+`/world_model` running** (it resolves the target's centroid there) — echo `/world_model` and pick a real
+id from `locations`. `open_door` / `climb_stairs` need the `--floor` / `--building` sim.
+
 **3D mapping — OctoMap voxels + elevation map for the stairs.** The 2D SLAM map is complemented by
 two **3D** maps, run *alongside* a live sim (they consume the RGB-D camera). Both are in
 `mapping3d.launch.py`; the shared input is a camera **point cloud** (`depth_image_proc` →
