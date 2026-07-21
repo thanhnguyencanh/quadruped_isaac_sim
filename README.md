@@ -322,6 +322,41 @@ two-floor mission (`open-door` + `use-stairs` + reports both floors); the **tele
 constant while z jumps ±3 m** and Spot stands stably on floor 2; and the executive's building profile
 dispatches `climb_stairs("stair_main up")`.
 
+### Check perception and world model
+
+**Victims: human figures + YOLO (default), or boxes + HSV (opt-out).** By default the victims are
+**realistic Isaac People humans** detected by a **pretrained YOLOv8** (`person` class, no finetuning)
+running on CPU from `~/yolo_venv`. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
+overlay + `/victims/markers`); pick via launch args — `humans:=…` / `detector:=…` thread through
+`mapping` → `sar_system` → `mission`/`floor_mission`:
+
+```bash
+ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
+ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
+#   + building:=true for the two-floor scene
+```
+Perception (each in its own `ROS_DOMAIN_ID=42` shell):
+```bash
+ros2 topic hz  /camera/rgb/image_raw     # ~25 Hz (640×480, camera_optical_frame)
+ros2 topic echo /victims                 # spot_sar_msgs/VictimArray — detections with range
+# watch what the detector sees (green boxes + confidence) — lighter than full RViz:
+ros2 run rqt_image_view rqt_image_view /camera/rgb/detections
+# drive Spot around to face a victim (WASD: w/s fwd/back, a/d strafe, q/e turn, space = stop):
+ros2 run spot_sar_sim teleop_keyboard
+```
+(The detector publishes the `/camera/rgb/detections` overlay only while something subscribes —
+opening it in `rqt_image_view` is what turns it on.)
+World model (symbol grounding — comes up with `mapping.launch.py` / `mission.launch.py`):
+```bash
+ros2 topic echo --once /world_model      # world_model_node: rooms + grounded victims (spot_sar_msgs/WorldModel)
+```
+**Pass:** `/victims` populates when Spot faces a victim (YOLO detects the Isaac human as `person` —
+verified at **0.94** confidence, ~8 Hz) and `/world_model` reflects the grounded rooms/victims. In
+`rviz.launch.py` the **Detections** overlay (green boxes) + **Victims** markers appear.
+
+The YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
+reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
+
 ### Check SLAM (2D + 3D mapping), path planning and navigation
 
 `sar_system.launch.py` is the full nav stack **without** the executive (Isaac + camera + `depth→/scan`
@@ -374,34 +409,7 @@ around — the two storeys appear as separate voxel bands at z≈0 and z≈3.
   voxels) and run elevation on a lighter scene / lower resolution. `setup_3d_mapping.sh` builds it into
   a `~/elevation_venv` (CuPy + NumPy pinned to the ROS ABI) and clones the Jazzy branch.
 
-### Check perception and world model
 
-**Victims: human figures + YOLO (default), or boxes + HSV (opt-out).** By default the victims are
-**realistic Isaac People humans** detected by a **pretrained YOLOv8** (`person` class, no finetuning)
-running on CPU from `~/yolo_venv`. Both detectors publish the same `/victims` (+ `/camera/rgb/detections`
-overlay + `/victims/markers`); pick via launch args — `humans:=…` / `detector:=…` thread through
-`mapping` → `sar_system` → `mission`/`floor_mission`:
-
-```bash
-ros2 launch spot_sar_bringup perception.launch.py                          # humans + YOLO (default)
-ros2 launch spot_sar_bringup perception.launch.py humans:=false detector:=hsv   # orange boxes + HSV (no venv needed)
-#   + building:=true for the two-floor scene
-```
-Perception:
-```bash
-ros2 topic hz  /camera/rgb/image_raw     # ~25 Hz (640×480, camera_optical_frame)
-ros2 topic echo /victims                 # spot_sar_msgs/VictimArray — detections with range
-```
-World model (symbol grounding — comes up with `mapping.launch.py` / `mission.launch.py`):
-```bash
-ros2 topic echo --once /world_model      # world_model_node: rooms + grounded victims (spot_sar_msgs/WorldModel)
-```
-**Pass:** `/victims` populates when Spot faces a victim (YOLO detects the Isaac human as `person` —
-verified at **0.94** confidence, ~8 Hz) and `/world_model` reflects the grounded rooms/victims. In
-`rviz.launch.py` the **Detections** overlay (green boxes) + **Victims** markers appear.
-
-The YOLO node (`spot_sar_perception/yolo_detector_node.py`) **subclasses** the HSV `detector_node`,
-reusing its depth back-projection + tf2 + overlay/markers — only the detection stage differs.
 
 ### Check PDDL planning and task executive
 
