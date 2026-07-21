@@ -4,7 +4,7 @@ The leanest possible app for *looking* at the simulation. NO ROS 2 at all — no
 extension, no rclpy, no OmniGraph publish graphs, no camera render product. It only:
 
   1. boots Isaac Sim (GUI by default — the whole point is to see it),
-  2. loads the SAR environment (grid ground + walled room + victim markers),
+  2. loads the SAR environment (grid ground + walled room + human victims; --no-humans for markers),
   3. spawns Spot with the flat-terrain policy and lets it stand,
   4. renders forever until you close the window (Spot holds a zero command = stands still).
 
@@ -39,6 +39,8 @@ parser.add_argument("--floor", action="store_true",
                     help="show the multi-room floor (walls + doors) instead of the single room")
 parser.add_argument("--building", action="store_true",
                     help="show the TWO-FLOOR building (x-offset wings + stacked stair landing + stairs)")
+parser.add_argument("--no-humans", dest="humans", action="store_false",
+                    help="use orange box victims instead of human figures (same flag as spot_perception_app.py)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--steps", type=int, default=0, help="auto-exit after N render frames (0 = run forever)")
 args, _ = parser.parse_known_args()
@@ -96,20 +98,23 @@ spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=[0.0, 0.0, 0.8])
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz] — held at zero = stand still
 
 # ---- environment: single room | multi-room floor (doors) | two-floor building (stairs) ----
+# Same victim style as spot_perception_app.py: Isaac People humans by default (needs the asset
+# root, streamed from cloud if no local pack), orange markers with --no-humans.
 if args.building:
-    _victims, _doors, _stair = build_two_floor_scene()
-    print(f"[view] BUILDING scene: {len(_victims)} victim(s); doors={list(_doors)}; "
-          f"stair={_stair['stair_id']} landing={_stair['landing_xy']} "
+    _victims, _doors, _stair = build_two_floor_scene(
+        humans=args.humans, assets_root_path=assets_root_path)
+    print(f"[view] BUILDING scene: {len(_victims)} victim(s) (humans={args.humans}); "
+          f"doors={list(_doors)}; stair={_stair['stair_id']} landing={_stair['landing_xy']} "
           f"(static viewer — no ROS to open doors or run the stair teleport; use --building in "
           f"spot_perception_app.py for that)", flush=True)
 elif args.floor:
-    _victims, _doors = build_floor_scene()
-    print(f"[view] FLOOR scene: {len(_victims)} victim(s); doors={list(_doors)} "
+    _victims, _doors = build_floor_scene(humans=args.humans, assets_root_path=assets_root_path)
+    print(f"[view] FLOOR scene: {len(_victims)} victim(s) (humans={args.humans}); doors={list(_doors)} "
           f"(closed — no ROS in this viewer to open them; use --floor in spot_perception_app.py for that)",
           flush=True)
 else:
-    _victims = build_sar_scene()
-    print(f"[view] SAR scene: {len(_victims)} victim marker(s) at {_victims}", flush=True)
+    _victims = build_sar_scene(humans=args.humans, assets_root_path=assets_root_path)
+    print(f"[view] SAR scene: {len(_victims)} victim(s) (humans={args.humans}) at {_victims}", flush=True)
 
 
 def _base_xyz():
