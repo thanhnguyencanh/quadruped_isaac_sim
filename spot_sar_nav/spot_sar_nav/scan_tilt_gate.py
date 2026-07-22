@@ -37,7 +37,9 @@ def roll_pitch(q):
 class ScanTiltGate(Node):
     def __init__(self):
         super().__init__("scan_tilt_gate")
-        self.declare_parameter("max_tilt_deg", 3.0)
+        # 4.0 = the floor-strike bound: atan(camera height 0.58 m / range_max 8 m) ~= 4.1 deg —
+        # up to there, even a fully pitched-down ray stays off the floor within sensor range.
+        self.declare_parameter("max_tilt_deg", 4.0)
         self.declare_parameter("scan_in", "/scan_raw")
         self.declare_parameter("scan_out", "/scan")
         self.declare_parameter("odom_topic", "/odom")

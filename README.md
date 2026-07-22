@@ -384,7 +384,8 @@ ros2 topic echo --once /plan             # the planned path
 > **Legged-robot scan gating.** Spot's body (and camera) pitches/rolls while walking, so raw scans
 > are not horizontal — tilted ones sweep the floor and smear phantom walls into `/map`/costmaps.
 > `scan_tilt_gate` (in `slam.launch.py`) republishes `/scan_raw`→`/scan` only while body
-> |roll|/|pitch| ≤ `max_tilt_deg` (default **3°**, tune via `max_tilt_deg:=…`); it logs the
+> |roll|/|pitch| ≤ `max_tilt_deg` (default **4°** — the floor-strike bound `atan(cam height / range_max)`;
+> tune via `max_tilt_deg:=…`); it logs the
 > pass rate every 5 s. While standing, 100% of scans pass.
 
 **Exploration + skills (Phase 4).** Neither node is auto-started by `sar_system.launch.py`, so each

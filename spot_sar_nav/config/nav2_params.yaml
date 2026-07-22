@@ -47,7 +47,9 @@ controller_server:
       stateful: true
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.5
+      # 0.3 (was 0.5): slower gait = less body pitch/roll oscillation, so more scans pass the
+      # tilt gate -> denser SLAM/costmap updates while walking. Trade-off: longer mission time.
+      desired_linear_vel: 0.3
       max_linear_accel: 1.0
       max_linear_decel: 1.0
       lookahead_dist: 0.6

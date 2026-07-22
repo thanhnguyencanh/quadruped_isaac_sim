@@ -97,8 +97,11 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
-            DeclareLaunchArgument("max_tilt_deg", default_value="3.0",
-                                  description="drop scans when body |roll|/|pitch| exceeds this"),
+            DeclareLaunchArgument("max_tilt_deg", default_value="4.0",
+                                  description="drop scans when body |roll|/|pitch| exceeds this; "
+                                              "4.0 is the floor-strike bound: atan(cam_height 0.58m "
+                                              "/ range_max 8m) ~= 4.1 deg, beyond which tilted rays "
+                                              "hit the floor within sensor range"),
             depth_to_scan,
             tilt_gate,
             slam,
