@@ -42,8 +42,24 @@ def generate_launch_description():
         remappings=[
             ("depth", "/camera/depth/image_raw"),
             ("depth_camera_info", "/camera/rgb/camera_info"),
-            ("scan", "/scan"),
+            ("scan", "/scan_raw"),  # raw, possibly tilted — gated below before anyone consumes it
         ],
+    )
+
+    # Legged-robot fix: the body (and camera) pitches/rolls while walking, so raw scans are not
+    # horizontal — tilted ones sweep the floor and smear phantom walls into /map and the costmaps.
+    # Gate them on the body attitude from /odom; slam_toolbox + Nav2 keep consuming plain /scan.
+    tilt_gate = Node(
+        package="spot_sar_nav",
+        executable="scan_tilt_gate",
+        name="scan_tilt_gate",
+        output="screen",
+        parameters=[{
+            "use_sim_time": use_sim_time,
+            "max_tilt_deg": LaunchConfiguration("max_tilt_deg"),
+            "scan_in": "/scan_raw",
+            "scan_out": "/scan",
+        }],
     )
 
     # slam_toolbox's launch handles the lifecycle configure+activate (autostart=true).
@@ -61,7 +77,10 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument("max_tilt_deg", default_value="3.0",
+                                  description="drop scans when body |roll|/|pitch| exceeds this"),
             depth_to_scan,
+            tilt_gate,
             slam,
         ]
     )

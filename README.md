@@ -367,7 +367,8 @@ ros2 launch spot_sar_bringup sar_system.launch.py     # Isaac + SLAM + Nav2 (hea
 ```
 Then, in another shell (`export ROS_DOMAIN_ID=42`):
 ```bash
-ros2 topic hz  /scan                     # ~48 Hz depth-derived lidar (SLAM input)
+ros2 topic hz  /scan                     # tilt-gated depth-derived lidar (SLAM input)
+ros2 topic hz  /scan_raw                 # ~48 Hz raw scan BEFORE the tilt gate (debug)
 ros2 topic echo --once /map              # slam_toolbox occupancy grid → SLAM works
 ros2 run tf2_ros tf2_echo map odom       # the map→odom transform is live
 # path planning + navigation — send a Nav2 goal, watch Spot walk there:
@@ -377,6 +378,12 @@ ros2 topic echo --once /plan             # the planned path
 ```
 **Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:
 `ros2 launch spot_sar_bringup rviz.launch.py`, then drop a **2D Goal Pose** and watch `/map`, `/plan`, and the robot move.
+
+> **Legged-robot scan gating.** Spot's body (and camera) pitches/rolls while walking, so raw scans
+> are not horizontal — tilted ones sweep the floor and smear phantom walls into `/map`/costmaps.
+> `scan_tilt_gate` (in `slam.launch.py`) republishes `/scan_raw`→`/scan` only while body
+> |roll|/|pitch| ≤ `max_tilt_deg` (default **3°**, tune via `max_tilt_deg:=…`); it logs the
+> pass rate every 5 s. While standing, 100% of scans pass.
 
 **Exploration + skills (Phase 4).** Neither node is auto-started by `sar_system.launch.py`, so each
 can be checked in isolation on top of it (every shell on `ROS_DOMAIN_ID=42`):

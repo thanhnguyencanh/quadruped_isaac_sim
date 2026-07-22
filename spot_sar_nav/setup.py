@@ -31,6 +31,7 @@ setup(
         'console_scripts': [
             'frontier_explorer = spot_sar_nav.frontier_explorer:main',
             'skill_server = spot_sar_nav.skill_server:main',
+            'scan_tilt_gate = spot_sar_nav.scan_tilt_gate:main',
         ],
     },
 )
