@@ -20,6 +20,7 @@ bt_navigator:
     use_sim_time: true
     global_frame: odom          # navigate in odom (see header); map-framed goals transform once
     robot_base_frame: base_link
+    transform_tolerance: 0.5    # goal transforms tolerate slam's map->odom staleness
     odom_topic: /odom
     bt_loop_duration: 10
     default_server_timeout: 20

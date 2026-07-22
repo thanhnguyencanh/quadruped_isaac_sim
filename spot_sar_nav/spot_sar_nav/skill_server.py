@@ -160,7 +160,9 @@ class SkillServer(Node):
             return False, "nav2 navigate_to_pose unavailable"
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = self.frame
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        # stamp ZERO = "latest transform" — see frontier_explorer._go: a now() stamp makes
+        # bt_navigator's map->odom goal transform race slam's stamp and abort the goal.
+        goal.pose.header.stamp = rclpy.time.Time().to_msg()
         goal.pose.pose.position.x = float(x)
         goal.pose.pose.position.y = float(y)
         goal.pose.pose.orientation.w = 1.0

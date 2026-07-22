@@ -78,6 +78,10 @@ class FrontierExplorer(Node):
         self.declare_parameter("planner_frame", "map")
         self.declare_parameter("robot_base_frame", "base_link")
         self.declare_parameter("replan_period", 2.0)
+        # Frontiers closer than this to the robot are UNCLEAREABLE: they sit inside the depth
+        # camera's minimum-range blind zone (range_min 0.3 + the body footprint), so standing
+        # "on" them never marks them known — chasing one livelocks exploration in place.
+        self.declare_parameter("min_frontier_dist", 1.0)
 
         self.frame = self.get_parameter("planner_frame").value
         self.base = self.get_parameter("robot_base_frame").value
@@ -97,11 +101,18 @@ class FrontierExplorer(Node):
         self.grid = msg
 
     def _robot_xy(self):
-        try:
-            t = self.tf_buffer.lookup_transform(self.frame, self.base, rclpy.time.Time())
-            return (t.transform.translation.x, t.transform.translation.y)
-        except (LookupException, ConnectivityException, ExtrapolationException):
-            return None
+        # Try the planner frame first, then odom (same chain minus slam's map->odom leg —
+        # near-identical in sim, and infinitely better than the map-origin fallback the
+        # caller would otherwise use). Log failures: a silent None here once livelocked
+        # exploration on an uncleareable blind-zone frontier.
+        for frame in (self.frame, "odom"):
+            try:
+                t = self.tf_buffer.lookup_transform(frame, self.base, rclpy.time.Time())
+                return (t.transform.translation.x, t.transform.translation.y)
+            except (LookupException, ConnectivityException, ExtrapolationException) as e:
+                self.get_logger().warn(f"robot pose lookup {frame}->{self.base} failed: {e}",
+                                       throttle_duration_sec=10.0)
+        return None
 
     def _tick(self):
         if self.busy or self.grid is None:
@@ -113,7 +124,16 @@ class FrontierExplorer(Node):
         if not cents:
             self.get_logger().info("no frontiers left — exploration complete.", throttle_duration_sec=10.0)
             return
-        rxy = self._robot_xy() or (info.origin.position.x, info.origin.position.y)
+        rxy = self._robot_xy()
+        if rxy is None:
+            return  # no robot pose -> can't rank frontiers or filter the blind zone; wait a tick
+        # drop blind-zone frontiers (see min_frontier_dist) — they can never be cleared
+        min_d = float(self.get_parameter("min_frontier_dist").value)
+        cents = [c for c in cents if math.hypot(c[0] - rxy[0], c[1] - rxy[1]) > min_d]
+        if not cents:
+            self.get_logger().info("only blind-zone frontiers remain — exploration complete.",
+                                   throttle_duration_sec=10.0)
+            return
         # pick the frontier maximizing size / distance (nearest, biggest)
         best = max(cents, key=lambda c: c[2] / (1.0 + math.hypot(c[0] - rxy[0], c[1] - rxy[1])))
         self._go(best[0], best[1])
@@ -124,7 +144,10 @@ class FrontierExplorer(Node):
             return
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = self.frame
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        # stamp ZERO = "latest available transform": bt_navigator transforms this map-framed goal
+        # into its odom global frame without racing slam's map->odom stamp (a now() stamp fails
+        # with "Failed to transform a goal pose" whenever the transform lags a scan-match).
+        goal.pose.header.stamp = rclpy.time.Time().to_msg()
         goal.pose.pose.position.x = float(x)
         goal.pose.pose.position.y = float(y)
         goal.pose.pose.orientation.w = 1.0
