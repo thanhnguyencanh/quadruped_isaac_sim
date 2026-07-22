@@ -409,7 +409,7 @@ id from `locations`. `open_door` / `climb_stairs` need the `--floor` / `--buildi
 **3D mapping — OctoMap voxels + elevation map for the stairs.** The 2D SLAM map is complemented by
 two **3D** maps, run *alongside* a live sim (they consume the RGB-D camera). Both are in
 `mapping3d.launch.py`; the shared input is a camera **point cloud** (`depth_image_proc` →
-`/camera/points`, already installed):
+`/camera/points`; `setup_3d_mapping.sh octomap` installs it along with the OctoMap stack):
 
 | Map | Node | Output | RViz |
 |---|---|---|---|

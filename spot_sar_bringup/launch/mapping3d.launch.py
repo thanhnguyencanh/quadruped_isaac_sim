@@ -15,8 +15,9 @@ Turns the RGB-D camera into a 3D map, two complementary ways:
   ros2 launch spot_sar_bringup mapping3d.launch.py fixed_frame:=map       # (with SLAM up)
   ros2 launch spot_sar_bringup mapping3d.launch.py elevation:=true        # + elevation_mapping_cupy
 
-REQUIRES (apt): ros-jazzy-octomap-server ros-jazzy-octomap-rviz-plugins ros-jazzy-octomap-msgs
-  (depth_image_proc is already installed). For elevation:=true see the elevation_mapping_cupy notes.
+REQUIRES (apt): ros-jazzy-depth-image-proc + the octomap/grid_map stack — install everything with
+  ./scripts/setup_3d_mapping.sh octomap   (the unige_legged Docker image ships it all already).
+  For elevation:=true see the elevation_mapping_cupy notes.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction

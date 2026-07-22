@@ -18,9 +18,10 @@ ELEV_VENV="${ELEV_VENV:-$HOME/elevation_venv}"
 STAGE="${1:-all}"
 
 octomap() {
-  echo "=== [A] OctoMap 3D voxel + grid_map (apt) ==="
+  echo "=== [A] OctoMap 3D voxel + grid_map + depth_image_proc (apt) ==="
   sudo apt-get update
   sudo apt-get install -y \
+    ros-jazzy-depth-image-proc \
     ros-jazzy-octomap ros-jazzy-octomap-msgs ros-jazzy-octomap-ros \
     ros-jazzy-octomap-server ros-jazzy-octomap-rviz-plugins \
     ros-jazzy-grid-map ros-jazzy-grid-map-rviz-plugin ros-jazzy-grid-map-msgs \
