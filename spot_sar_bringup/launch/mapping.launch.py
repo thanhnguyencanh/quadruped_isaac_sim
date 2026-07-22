@@ -24,17 +24,20 @@ def generate_launch_description():
     humans = LaunchConfiguration("humans")        # humans:=false -> orange box victims
     detector = LaunchConfiguration("detector")    # yolo | hsv
     gui = LaunchConfiguration("gui")              # gui:=false -> headless Isaac (lighter)
+    lidar = LaunchConfiguration("lidar")          # lidar:=true -> stabilized 360-deg /scan
     perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "perception.launch.py"])
         ),
         launch_arguments={"run_detector": run_detector, "floor": floor, "building": building,
-                          "humans": humans, "detector": detector, "gui": gui}.items(),
+                          "humans": humans, "detector": detector, "gui": gui,
+                          "lidar": lidar}.items(),
     )
     slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_nav"), "launch", "slam.launch.py"])
-        )
+        ),
+        launch_arguments={"lidar": lidar}.items(),
     )
     return LaunchDescription(
         [
@@ -44,6 +47,7 @@ def generate_launch_description():
             DeclareLaunchArgument("humans", default_value="true"),
             DeclareLaunchArgument("detector", default_value="yolo"),
             DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument("lidar", default_value="true"),
             perception,
             slam,
         ]

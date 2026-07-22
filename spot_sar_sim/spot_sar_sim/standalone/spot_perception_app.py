@@ -59,6 +59,9 @@ parser.add_argument("--building", action="store_true",
                     help="build the TWO-FLOOR building (x-offset wings + stacked stair landing + stairs)")
 parser.add_argument("--no-humans", dest="humans", action="store_false",
                     help="use orange box victims (HSV detector) instead of human figures (YOLO)")
+parser.add_argument("--no-lidar", dest="lidar", action="store_false",
+                    help="disable the DEFAULT stabilized 360-deg lidar /scan and fall back to the "
+                         "camera-depth scan pipeline (launch slam with lidar:=false to match)")
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="physics/policy device")
 parser.add_argument("--spawn", nargs=3, type=float, default=None, metavar=("X", "Y", "Z"),
                     help="override Spot's spawn position (e.g. --spawn 10.5 0 0.8 to start on the stair landing)")
@@ -91,11 +94,16 @@ from isaacsim.core.utils.extensions import enable_extension
 enable_extension("isaacsim.ros2.bridge")
 simulation_app.update()
 
+import math
+
 import rclpy
-from geometry_msgs.msg import Twist
+from builtin_interfaces.msg import Time as RosTime
+from geometry_msgs.msg import TransformStamped, Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
+from tf2_ros import TransformBroadcaster
 
 import numpy as np
 import omni.graph.core as og
@@ -285,6 +293,79 @@ SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 
 _spawn = list(args.spawn) if args.spawn else [0.0, 0.0, 0.8]
 spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=_spawn)
+class LidarNode(Node):
+    """Virtual STABILIZED 360-deg 2D lidar -> /scan (+ the odom->lidar_link TF).
+
+    Rays are cast HORIZONTALLY via PhysX scene queries from (base_x, base_y, base_z + DZ)
+    with IDENTITY rotation: the mount follows the robot's position but never its roll/pitch,
+    so every scan is level by construction — no tilt gate, no floor strikes, and 360-deg
+    coverage instead of the camera's 67 deg. Sim-idealized on purpose (a real robot would
+    need a gimbal or per-scan motion compensation); launch slam.launch.py with lidar:=true
+    so the camera-depth scan pipeline is not started on the same topic.
+    """
+
+    N_BEAMS = 360
+    DZ = 0.35            # scan plane height above the base link: ~0.82 m on floor 1 —
+    #                      above Spot's own body (no self-hits), below the 2 m walls,
+    #                      and floor-relative so the plane stays valid after a stair teleport
+    RANGE_MIN = 0.3
+    RANGE_MAX = 8.0      # matches slam_toolbox min/max_laser_range
+    PUBLISH_EVERY = 2    # main-loop ticks per scan (~12-15 Hz at the ~25-30 Hz render rate)
+
+    def __init__(self):
+        # PUBLISHERS ONLY — no use_sim_time TimeSource and no /clock subscription. Bisected
+        # empirically: ANY in-process subscription to our own bridge-published /clock (TimeSource
+        # or manual) wedges inbound DDS delivery for the whole shared context — CmdVelNode stops
+        # receiving /cmd_vel and the robot freezes. Sim time comes straight from the Isaac
+        # timeline instead (the same clock the bridge stamps /clock with).
+        super().__init__("spot_lidar")
+        from omni.physx import get_physx_scene_query_interface  # physx is live by now
+        self._query = get_physx_scene_query_interface()
+        self._timeline = omni.timeline.get_timeline_interface()
+        self._tf = TransformBroadcaster(self)
+        self.pub = self.create_publisher(LaserScan, "/scan", QoSProfile(depth=10))
+        inc = 2.0 * math.pi / self.N_BEAMS
+        self._inc = inc
+        self._dirs = [(math.cos(-math.pi + i * inc), math.sin(-math.pi + i * inc))
+                      for i in range(self.N_BEAMS)]
+        self._tick = 0
+
+    def step(self, base_xyz):
+        self._tick += 1
+        if self._tick % self.PUBLISH_EVERY:
+            return
+        ox, oy, oz = float(base_xyz[0]), float(base_xyz[1]), float(base_xyz[2]) + self.DZ
+        if not np.isfinite(ox) or not np.isfinite(oy) or not np.isfinite(oz):
+            return
+        origin = carb.Float3(ox, oy, oz)
+        ranges = []
+        for dx, dy in self._dirs:
+            hit = self._query.raycast_closest(origin, carb.Float3(dx, dy, 0.0), self.RANGE_MAX)
+            d = float(hit.get("distance", 0.0)) if hit.get("hit") else float("inf")
+            ranges.append(d if d >= self.RANGE_MIN else float("inf"))
+        sim_t = float(self._timeline.get_current_time())
+        now = RosTime(sec=int(sim_t), nanosec=int((sim_t - int(sim_t)) * 1e9))
+        t = TransformStamped()
+        t.header.stamp = now
+        t.header.frame_id = "odom"
+        t.child_frame_id = "lidar_link"
+        t.transform.translation.x = ox
+        t.transform.translation.y = oy
+        t.transform.translation.z = oz
+        t.transform.rotation.w = 1.0  # identity: the stabilized mount never rotates
+        self._tf.sendTransform(t)
+        scan = LaserScan()
+        scan.header.stamp = now
+        scan.header.frame_id = "lidar_link"
+        scan.angle_min = -math.pi
+        scan.angle_max = -math.pi + (self.N_BEAMS - 1) * self._inc
+        scan.angle_increment = self._inc
+        scan.range_min = self.RANGE_MIN
+        scan.range_max = self.RANGE_MAX
+        scan.ranges = ranges
+        self.pub.publish(scan)
+
+
 base_command = torch.zeros(3, device=args.device)  # [vx, vy, wz]; mutated in place
 
 # ---- SAR environment: single room | multi-room floor (doors) | two-floor building (stairs) ----
@@ -450,13 +531,15 @@ simulation_app.update()
 cmd_node = CmdVelNode()  # rclpy already initialized before the graphs
 door_node = DoorNode(_door_handles) if _door_handles else None  # door bus (floor + building demos)
 stair_node = StairsNode(spot, _stair_info) if _stair_info else None  # stair bus (building only)
+lidar_node = LidarNode() if args.lidar else None  # stabilized 360-deg /scan (opt-in)
 DOOR_RATE = 0.02  # fraction of slab travel per loop tick (~1-2 s to fully open)
 
 print(
     "[perception] publishing /clock /joint_states /odom /tf "
     "+ /camera/rgb/image_raw /camera/depth/image_raw /camera/rgb/camera_info; "
     "subscribing /cmd_vel" + ("; doors on /door_cmd -> /door_states" if door_node else "")
-    + ("; stairs on /stairs_cmd -> /floor_state" if stair_node else "") + " (rclpy)",
+    + ("; stairs on /stairs_cmd -> /floor_state" if stair_node else "")
+    + ("; STABILIZED 360-deg lidar on /scan (+odom->lidar_link)" if lidar_node else "") + " (rclpy)",
     flush=True,
 )
 frame = 0
@@ -469,6 +552,8 @@ while simulation_app.is_running():
     if stair_node is not None:
         rclpy.spin_once(stair_node, timeout_sec=0.0)
         stair_node.step()
+    if lidar_node is not None:
+        lidar_node.step(_base_xyz())  # publishers only — nothing to spin
     if not SimulationManager.is_simulating():
         continue
 
@@ -493,6 +578,8 @@ if door_node is not None:
     door_node.destroy_node()
 if stair_node is not None:
     stair_node.destroy_node()
+if lidar_node is not None:
+    lidar_node.destroy_node()
 rclpy.shutdown()
 simulation_app.close()
 print("[perception] done.", flush=True)

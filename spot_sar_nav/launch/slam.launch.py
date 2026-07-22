@@ -16,6 +16,7 @@ Assumes the perception app is publishing the camera + TF (run perception.launch.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, TimerAction
+from launch.conditions import UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -26,7 +27,10 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     slam_params = PathJoinSubstitution([FindPackageShare("spot_sar_nav"), "config", "slam_toolbox.yaml"])
 
+    # Camera-depth scan path — SKIPPED with lidar:=true (the perception app then publishes the
+    # stabilized 360-deg lidar directly on /scan; no tilt gate needed, scans are level by design).
     depth_to_scan = Node(
+        condition=UnlessCondition(LaunchConfiguration("lidar")),
         package="depthimage_to_laserscan",
         executable="depthimage_to_laserscan_node",
         name="depth_to_scan",
@@ -50,6 +54,7 @@ def generate_launch_description():
     # horizontal — tilted ones sweep the floor and smear phantom walls into /map and the costmaps.
     # Gate them on the body attitude from /odom; slam_toolbox + Nav2 keep consuming plain /scan.
     tilt_gate = Node(
+        condition=UnlessCondition(LaunchConfiguration("lidar")),
         package="spot_sar_nav",
         executable="scan_tilt_gate",
         name="scan_tilt_gate",
@@ -97,6 +102,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument("lidar", default_value="true",
+                                  description="true (default) = the app's stabilized lidar owns /scan; "
+                                              "skip depth_to_scan + the tilt gate"),
             DeclareLaunchArgument("max_tilt_deg", default_value="4.0",
                                   description="drop scans when body |roll|/|pitch| exceeds this; "
                                               "4.0 is the floor-strike bound: atan(cam_height 0.58m "

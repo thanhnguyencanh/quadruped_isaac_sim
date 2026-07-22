@@ -102,6 +102,8 @@ def _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions, human
     `positions` is a list of (x, y, z) with z the ABSOLUTE marker-centre height. `foot_zs` (parallel,
     optional) gives each floor's slab-top height for standing HUMANS (default 0.0 = single floor).
     Returns the list of reported victim positions."""
+    from pxr import UsdPhysics
+
     use_humans = bool(humans and assets_root_path)
     if humans and not assets_root_path:
         print("[sar_scene] humans requested but no assets_root_path given; using orange markers",
@@ -114,11 +116,20 @@ def _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, positions, human
             usd = assets_root_path + f"/Isaac/People/Characters/{name}/{name}.usd"
             yaw = 180.0 if x > 0 else 0.0  # roughly face the room interior / patrolling robot
             p = _add_human(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, foot_z), yaw, usd)
+            # INVISIBLE collision proxy: the skeletal character mesh has no physics, so without
+            # this Spot walks straight THROUGH people. A person-sized static column makes the
+            # victim solid (and visible to the horizontal lidar plane); invisible to rendering,
+            # so the camera/YOLO see only the human mesh.
+            proxy = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}_collision",
+                         (x, y, foot_z + 0.85), (0.4, 0.4, 1.7), VICTIM_COLOR)
+            UsdGeom.Imageable(proxy).MakeInvisible()
+            _add_static_collider(UsdPhysics, proxy)
             if label_semantics:
                 _label(p, "victim")
             out.append((x, y, foot_z))  # report foot position (on the floor's slab)
         else:
             p = _box(define_prim, UsdGeom, Gf, f"/World/Victim_{i}", (x, y, z), None, VICTIM_COLOR, size=0.5)
+            _add_static_collider(UsdPhysics, p)  # victims are solid in marker mode too
             _emissive_material(UsdShade, Sdf, Gf, p, VICTIM_COLOR)
             if label_semantics:
                 _label(p, "victim")
@@ -149,18 +160,22 @@ def build_sar_scene(label_semantics=False, humans=True, assets_root_path=None):
     label_semantics: apply UsdSemantics class labels (for the Replicator SDG).
     Returns the list of victim (x, y, z) world positions.
     """
-    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
+    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, UsdPhysics
     from isaacsim.core.experimental.utils.stage import define_prim
 
     _add_lighting(define_prim, UsdLux, Gf)
+    # static colliders like the floor/building scenes: the walls must be PHYSICAL, both so the
+    # lidar raycasts hit them and so Spot cannot walk through them (visual-only before).
     for name, pos, scale in WALLS:
-        _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, scale, WALL_COLOR)
+        p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, scale, WALL_COLOR)
+        _add_static_collider(UsdPhysics, p)
 
     victims = _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, list(VICTIM_POS),
                                  humans, assets_root_path, label_semantics)
 
     d = _box(define_prim, UsdGeom, Gf, "/World/Distractor_0", DISTRACTOR_POS, None,
              DISTRACTOR_COLOR, size=0.5)
+    _add_static_collider(UsdPhysics, d)
     _emissive_material(UsdShade, Sdf, Gf, d, DISTRACTOR_COLOR)
     if label_semantics:
         _label(d, "distractor")

@@ -58,6 +58,8 @@ def _launch(context, *args, **kwargs):
         cmd.append("--floor")  # multi-room floor with openable doors
     if not humans:
         cmd.append("--no-humans")  # orange box victims (for the HSV detector) instead of humans
+    if LaunchConfiguration("lidar").perform(context).lower() not in ("1", "true", "yes"):
+        cmd.append("--no-lidar")  # fall back to the camera-depth scan (pair with slam lidar:=false)
 
     actions = [
         ExecuteProcess(
@@ -119,6 +121,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument("lidar", default_value="true",
+                                  description="stabilized 360-deg lidar owns /scan (mapping/nav); "
+                                              "the camera is perception-only. false = camera-depth scan"),
             DeclareLaunchArgument("floor", default_value="false"),
             DeclareLaunchArgument("building", default_value="false",
                                   description="two-floor building (stairs) instead of the single room / floor"),

@@ -359,16 +359,24 @@ reusing its depth back-projection + tf2 + overlay/markers — only the detection
 
 ### Check SLAM (2D + 3D mapping), path planning and navigation
 
-`sar_system.launch.py` is the full nav stack **without** the executive (Isaac + camera + `depth→/scan`
-+ `slam_toolbox` + Nav2), so you can send a goal by hand and watch Spot drive to it:
+**Sensor split: the LIDAR maps and navigates; the camera only detects victims.** By default `/scan`
+comes from a **stabilized virtual 360° lidar** in the sim app: PhysX rays cast horizontally from a
+mount that follows the robot's position but *never its roll/pitch* — every scan is level by
+construction (no tilt corruption, no floor strikes) with 360° coverage instead of the camera's 67°.
+Walls, doors and **human victims are solid** (collision-verified: Spot driven full-speed into a wall
+and a person stops at their face), so the lidar sees them and costmaps avoid them. Sim-idealized on
+purpose — a real robot would need a gimbal or scan motion-compensation (report limitation).
+`lidar:=false` restores the legacy camera-depth scan + tilt gate (for comparison/ablation).
+
+`sar_system.launch.py` is the full nav stack **without** the executive (Isaac + lidar + camera +
+`slam_toolbox` + Nav2), so you can send a goal by hand and watch Spot drive to it:
 
 ```bash
 ros2 launch spot_sar_bringup sar_system.launch.py     # Isaac + SLAM + Nav2 (heavy; run on a fresh boot)
 ```
 Then, in another shell (`export ROS_DOMAIN_ID=42`):
 ```bash
-ros2 topic hz  /scan                     # tilt-gated depth-derived lidar (SLAM input)
-ros2 topic hz  /scan_raw                 # ~48 Hz raw scan BEFORE the tilt gate (debug)
+ros2 topic hz  /scan                     # ~12-15 Hz, 360 beams, frame lidar_link
 ros2 topic echo --once /map              # slam_toolbox occupancy grid → SLAM works
 ros2 run tf2_ros tf2_echo map odom       # the map→odom transform is live
 # path planning + navigation — send a Nav2 goal, watch Spot walk there
@@ -381,12 +389,10 @@ ros2 topic echo --once /plan             # the planned path
 **Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:
 `ros2 launch spot_sar_bringup rviz.launch.py`, then drop a **2D Goal Pose** and watch `/map`, `/plan`, and the robot move.
 
-> **Legged-robot scan gating.** Spot's body (and camera) pitches/rolls while walking, so raw scans
-> are not horizontal — tilted ones sweep the floor and smear phantom walls into `/map`/costmaps.
-> `scan_tilt_gate` (in `slam.launch.py`) republishes `/scan_raw`→`/scan` only while body
-> |roll|/|pitch| ≤ `max_tilt_deg` (default **4°** — the floor-strike bound `atan(cam height / range_max)`;
-> tune via `max_tilt_deg:=…`); it logs the
-> pass rate every 5 s. While standing, 100% of scans pass.
+> **Legacy camera-scan mode (`lidar:=false`).** The depth-derived scan tilts with the body, so
+> `scan_tilt_gate` republishes `/scan_raw`→`/scan` only while |roll|/|pitch| ≤ `max_tilt_deg`
+> (default **4°** — the floor-strike bound `atan(cam height / range_max)`), logging the pass rate
+> every 5 s. Kept for the sim-to-real ablation story; the stabilized lidar makes it unnecessary.
 
 **Exploration + skills (Phase 4).** Neither node is auto-started by `sar_system.launch.py`, so each
 can be checked in isolation on top of it (every shell on `ROS_DOMAIN_ID=42`):
