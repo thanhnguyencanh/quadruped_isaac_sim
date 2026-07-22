@@ -1,5 +1,13 @@
 # Nav2 parameters for Spot SAR (Phase 4).
-# 2D navigation on the slam_toolbox /map, obstacles from /scan (the depth-derived laser).
+# 2D navigation in the ODOM frame, obstacles from /scan (the depth-derived laser).
+#
+# WHY odom-frame navigation: the control loop must NEVER depend on slam_toolbox's map->odom —
+# with the narrow 67-deg scan, matching intermittently fails and the transform goes stale for
+# 0.5-1 s at a time; RPP aborts the whole goal on a single failed lookup ("extrapolation into
+# the future") and the robot freezes. odom->base_link comes from the Isaac bridge at ~90 Hz and
+# is always fresh. Both costmaps are ROLLING with obstacles from /scan (no static /map layer),
+# so nothing in the control path needs map->odom. SLAM still runs for /map + symbol grounding;
+# map-framed goals (from the skills/executive) are transformed ONCE per goal by bt_navigator.
 # Spot's locomotion policy subscribes to a geometry_msgs/Twist on /cmd_vel, so the controller
 # must emit plain Twist (enable_stamped_cmd_vel: false). If your Nav2 build forces TwistStamped,
 # add a TwistStamped->Twist relay (see spot_sar_nav notes) instead of fighting the param.
@@ -10,7 +18,7 @@
 bt_navigator:
   ros__parameters:
     use_sim_time: true
-    global_frame: map
+    global_frame: odom          # navigate in odom (see header); map-framed goals transform once
     robot_base_frame: base_link
     odom_topic: /odom
     bt_loop_duration: 10
@@ -45,7 +53,9 @@ controller_server:
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
       rotate_to_heading_angular_vel: 0.6
-      transform_tolerance: 0.2
+      # 0.5 (was 0.2): slam_toolbox refreshes map->odom per scan-match, so at the 20 Hz control
+      # rate lookups can be ~0.1-0.3 s stale -> "extrapolation into the future" aborts mid-path.
+      transform_tolerance: 0.5
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
@@ -62,6 +72,7 @@ local_costmap:
       use_sim_time: true
       global_frame: odom
       robot_base_frame: base_link
+      transform_tolerance: 0.5
       update_frequency: 5.0
       publish_frequency: 2.0
       width: 6
@@ -91,8 +102,9 @@ global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: true
-      global_frame: map
+      global_frame: odom        # rolling costmap; odom keeps planning independent of SLAM latency
       robot_base_frame: base_link
+      transform_tolerance: 0.5
       update_frequency: 1.0
       publish_frequency: 1.0
       resolution: 0.05

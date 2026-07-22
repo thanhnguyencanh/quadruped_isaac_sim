@@ -371,9 +371,11 @@ ros2 topic hz  /scan                     # tilt-gated depth-derived lidar (SLAM 
 ros2 topic hz  /scan_raw                 # ~48 Hz raw scan BEFORE the tilt gate (debug)
 ros2 topic echo --once /map              # slam_toolbox occupancy grid → SLAM works
 ros2 run tf2_ros tf2_echo map odom       # the map→odom transform is live
-# path planning + navigation — send a Nav2 goal, watch Spot walk there:
+# path planning + navigation — send a Nav2 goal, watch Spot walk there
+# (navigation runs in the ODOM frame — decoupled from SLAM latency; map-framed goals also work,
+#  transformed once by bt_navigator):
 ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
-  "{pose: {header: {frame_id: map}, pose: {position: {x: 2.0, y: 0.0}, orientation: {w: 1.0}}}}"
+  "{pose: {header: {frame_id: odom}, pose: {position: {x: 2.0, y: 0.0}, orientation: {w: 1.0}}}}"
 ros2 topic echo --once /plan             # the planned path
 ```
 **Pass:** Nav2 logs **`Reached the goal!`** and Spot reaches the target. Easiest visually:

@@ -15,7 +15,7 @@ Assumes the perception app is publishing the camera + TF (run perception.launch.
   ros2 launch spot_sar_nav slam.launch.py
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -62,6 +62,26 @@ def generate_launch_description():
         }],
     )
 
+    # Watchdog: slam_toolbox's own launch AUTOSTART sometimes misses the ACTIVATE transition —
+    # the node logs "Configuring" and then sits INACTIVE forever (no /scan subscription, no /map,
+    # no map->odom => Nav2 rejects every goal and the robot never moves). Nudge it to ACTIVE.
+    slam_activate_watchdog = TimerAction(
+        period=12.0,
+        actions=[ExecuteProcess(
+            cmd=["bash", "-c",
+                 "for i in $(seq 1 20); do "
+                 "s=$(ros2 lifecycle get /slam_toolbox 2>/dev/null | head -1); "
+                 "case \"$s\" in "
+                 "active*) echo '[slam_watchdog] slam_toolbox ACTIVE'; exit 0;; "
+                 "inactive*) echo '[slam_watchdog] nudging: activate'; "
+                 "  ros2 lifecycle set /slam_toolbox activate >/dev/null 2>&1;; "
+                 "unconfigured*) echo '[slam_watchdog] nudging: configure'; "
+                 "  ros2 lifecycle set /slam_toolbox configure >/dev/null 2>&1;; "
+                 "esac; sleep 3; done; "
+                 "echo '[slam_watchdog] WARNING: slam_toolbox never reached ACTIVE'"],
+            output="screen")],
+    )
+
     # slam_toolbox's launch handles the lifecycle configure+activate (autostart=true).
     slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -82,5 +102,6 @@ def generate_launch_description():
             depth_to_scan,
             tilt_gate,
             slam,
+            slam_activate_watchdog,
         ]
     )
