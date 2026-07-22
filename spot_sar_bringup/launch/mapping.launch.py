@@ -23,12 +23,13 @@ def generate_launch_description():
     building = LaunchConfiguration("building")    # building:=true -> two-floor building (stairs)
     humans = LaunchConfiguration("humans")        # humans:=false -> orange box victims
     detector = LaunchConfiguration("detector")    # yolo | hsv
+    gui = LaunchConfiguration("gui")              # gui:=false -> headless Isaac (lighter)
     perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "perception.launch.py"])
         ),
         launch_arguments={"run_detector": run_detector, "floor": floor, "building": building,
-                          "humans": humans, "detector": detector}.items(),
+                          "humans": humans, "detector": detector, "gui": gui}.items(),
     )
     slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -42,6 +43,7 @@ def generate_launch_description():
             DeclareLaunchArgument("building", default_value="false"),
             DeclareLaunchArgument("humans", default_value="true"),
             DeclareLaunchArgument("detector", default_value="yolo"),
+            DeclareLaunchArgument("gui", default_value="true"),
             perception,
             slam,
         ]

@@ -26,9 +26,9 @@ realism / perception; Spot never drives onto it.
 import os
 
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -41,7 +41,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare("spot_sar_bringup"), "launch", "sar_system.launch.py"])
         ),
-        launch_arguments={"building": "true"}.items(),
+        launch_arguments={"building": "true", "gui": LaunchConfiguration("gui")}.items(),
     )
     skills = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -67,4 +67,7 @@ def generate_launch_description():
             )
         ],
     )
-    return LaunchDescription([sar_system, skills, building_world_model, executive])
+    return LaunchDescription([
+        DeclareLaunchArgument("gui", default_value="true"),
+        sar_system, skills, building_world_model, executive,
+    ])
