@@ -38,8 +38,13 @@ controller_server:
     controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      # relaxed for legged arc-turning: with rotate_to_heading off (the policy cannot turn
+      # in place) a goal behind the robot needs a wide arc, and near walls the regulated
+      # 0.35 m/s floor makes honest progress ~0.3-0.4 m per 10 s — the old 0.5 m / 10 s
+      # tripped false "Failed to make progress" aborts mid-arc. Real stalls are gone with
+      # the standing-attractor fix, so the looser gate stays safe.
+      required_movement_radius: 0.3
+      movement_time_allowance: 15.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.35   # approach arrives at >= 0.35 m/s (policy walk floor) — needs margin
