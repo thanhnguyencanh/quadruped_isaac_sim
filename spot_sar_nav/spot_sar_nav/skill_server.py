@@ -250,7 +250,7 @@ class SkillServer(Node):
             res.success, res.message = True, f"observed {self.n_victims} victim(s)"
 
         elif skill == "report":
-            self.get_logger().info(f"*** REPORTED victim {target} ***")
+            self.get_logger().warn(f"*** REPORTED victim {target} ***")
             res.success, res.message = True, f"reported {target}"
 
         elif skill == "open_door":

@@ -145,7 +145,7 @@ class TaskExecutive(Node):
             # finishes) until it reports the area fully explored. Idling here deadlocked the
             # whole mission: robot never moves -> camera never sees -> world model never grows.
             if self.explore_done:
-                self.get_logger().info(
+                self.get_logger().warn(
                     f"MISSION COMPLETE: area fully explored, {len(self.reported)} victim(s) reported.",
                     throttle_duration_sec=30.0)
                 return
@@ -209,7 +209,7 @@ class TaskExecutive(Node):
             # rare). Fall back to sensing toward them rather than idling.
             self._sense_toward(vids, loc_by_id)
             return
-        self.get_logger().info(f"PLAN ({len(plan)} actions); next: {plan[0]}")
+        self.get_logger().warn(f"PLAN ({len(plan)} actions); next: {plan[0]}")
         self._dispatch(plan[0])
 
     # ---------------- STATUS (terminal dashboard) ----------------
@@ -226,7 +226,7 @@ class TaskExecutive(Node):
             phase = "RESCUE"
         else:
             phase = "EXPLORING"
-        self.get_logger().info(
+        self.get_logger().warn(  # WARN = yellow console line: easy to spot (user request)
             f"[STATUS] phase={phase}  action={self.current_action}  "
             f"victims known={known} found={len(self.found)} reported={len(self.reported)}"
             + (f" blocked={len(self.blocked)}" if self.blocked else "")
@@ -369,7 +369,7 @@ class TaskExecutive(Node):
                     self.found.add(vid)
             if name == "report":
                 self.reported.add(int(args[0].lstrip("vV")))
-                self.get_logger().info(f"*** victim {args[0]} REPORTED — mission progress ***")
+                self.get_logger().warn(f"*** victim {args[0]} REPORTED — mission progress ***")
         else:
             # same action failing repeatedly -> block its victim so the mission can terminate.
             if self.last_action == action:

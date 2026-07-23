@@ -118,7 +118,7 @@ class WorldModelNode(Node):
                     f"victim candidate v{rec['id']} at ({p[0]:.2f}, {p[1]:.2f}) "
                     f"(conf {float(v.confidence):.2f}, {v.source}) — awaiting confirmation")
             elif rec["hits"] == self.min_hits:
-                self.get_logger().info(
+                self.get_logger().warn(  # yellow: a victim entering the mission is a KEY event
                     f"*** VICTIM v{rec['id']} CONFIRMED at ({rec['x']:.2f}, {rec['y']:.2f}) -> cell "
                     f"{cell_id(rec['x'], rec['y'], self.cell)} (conf {rec['confidence']:.2f}) ***")
 
@@ -182,7 +182,7 @@ class WorldModelNode(Node):
             wm.victim_reported.append(bool(v["reported"]))
 
         self.pub.publish(wm)
-        self.get_logger().info(
+        self.get_logger().warn(  # yellow: the grounding summary is mission-tracking signal
             f"world_model: {len(locations)} locations, {len(confirmed)} victims "
             f"({len(self.victims) - len(confirmed)} candidates), "
             f"robot@{self.robot_cell or '?'}",
