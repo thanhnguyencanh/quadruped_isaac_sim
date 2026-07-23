@@ -207,7 +207,7 @@ standalone apps (all share the same victim markers / Isaac People + `UsdSemantic
 
 | Environment | Flag | Scene builder | What's in it |
 |---|---|---|---|
-| **Single room** (default) | *(none)* | `build_sar_scene()` | one walled room + orange victim markers + a distractor — the Phase 0–6 mission |
+| **Single room** (default) | *(none)* | `build_sar_scene()` | a 20×20 m collapsed interior: outer walls + 2 m interior wall segments (lidar structure + occlusion frontiers) + victims (all beyond the lidar's 5 m first scan, so exploration is required) + a distractor — the Phase 0–6 mission |
 | **3-room floor + doors** | `--floor` | `build_floor_scene()` | rooms A–B–C, divider walls with door gaps + sliding door slabs (PDDL `open-door`) |
 | **Two-floor building + stairwell** | `--building` | `build_two_floor_scene()` | two x-offset floors, floor-1 doors + a stairwell landing (PDDL `use-stairs`) |
 
@@ -363,6 +363,15 @@ reusing its depth back-projection + tf2 + overlay/markers — only the detection
 comes from a **stabilized virtual 360° lidar** in the sim app: PhysX rays cast horizontally from a
 mount that follows the robot's position but *never its roll/pitch* — every scan is level by
 construction (no tilt corruption, no floor strikes) with 360° coverage instead of the camera's 67°.
+Range is capped at **5 m** — deliberately smaller than the 20 m room, so a single sweep cannot
+finish the map and the frontier explorer always has unknown space to chase. No-return beams are
+`inf` per REP-117 — **never republish them as finite values**: karto's scan matcher uses its
+unfiltered readings, and a finite "miss ring" is rotation-invariant, so it out-correlates the
+real walls and collapses every scan pose onto the previous one (the map degenerates into a 5 m
+free disc that follows the robot). Division of labor: **slam's `/map` maps geometry** (walls,
+carved free space along hit rays only), while the **nav2 costmaps carry "explored free space"**
+(`inf_is_valid: true` raytrace-clears the inf beams) — the frontier explorer and the `explore`
+skill therefore read `/global_costmap/costmap` (odom frame), not `/map`.
 Walls, doors and **human victims are solid** (collision-verified: Spot driven full-speed into a wall
 and a person stops at their face), so the lidar sees them and costmaps avoid them. Sim-idealized on
 purpose — a real robot would need a gimbal or scan motion-compensation (report limitation).

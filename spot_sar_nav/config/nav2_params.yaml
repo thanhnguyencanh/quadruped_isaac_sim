@@ -42,31 +42,43 @@ controller_server:
       movement_time_allowance: 10.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.35   # approach arrives at >= 0.35 m/s (policy walk floor) — needs margin
+      yaw_goal_tolerance: 6.28  # heading-agnostic: pure in-place rotation is the policy's OTHER
+      #                           weak regime (commanded wz-only it CREEPS diagonally instead of
+      #                           turning — observed drifting 7 m into a corner). Frontier goals
+      #                           have arbitrary orientation; never demand a final yaw.
       stateful: true
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      # 0.3 (was 0.5): slower gait = less body pitch/roll oscillation, so more scans pass the
-      # tilt gate -> denser SLAM/costmap updates while walking. Trade-off: longer mission time.
-      desired_linear_vel: 0.3
+      # SPEEDS MUST STAY IN THE POLICY'S WALK REGIME. The flat-terrain policy was trained with
+      # lin_vel_x in [-2, 3] m/s and 10% standing envs (spot_env.yaml rel_standing_envs) — it
+      # has a deliberate "stand still" attractor that swallows commands around <=0.3 m/s from
+      # standstill: cmd 0.25 measured 0.000 m displacement, joints static, while wz 0.8 walks
+      # fine. The old 0.3 slow-gait (denser tilt-gated camera scans) is obsolete with the
+      # stabilized lidar; every floor below keeps commanded speed >= ~0.35.
+      desired_linear_vel: 0.6
       max_linear_accel: 1.0
       max_linear_decel: 1.0
       lookahead_dist: 0.6
       min_lookahead_dist: 0.3
       max_lookahead_dist: 0.9
-      rotate_to_heading_angular_vel: 0.6
+      rotate_to_heading_angular_vel: 0.8
       # 0.5 (was 0.2): slam_toolbox refreshes map->odom per scan-match, so at the 20 Hz control
       # rate lookups can be ~0.1-0.3 s stale -> "extrapolation into the future" aborts mid-path.
       transform_tolerance: 0.5
       use_velocity_scaled_lookahead_dist: true
-      min_approach_linear_velocity: 0.05
+      min_approach_linear_velocity: 0.35   # never command sub-walkable speeds on goal approach
       approach_velocity_scaling_dist: 0.6
       use_regulated_linear_velocity_scaling: true
       regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.35  # curvature slowdown floor stays walkable
       max_angular_accel: 2.0
       max_robot_pose_search_dist: 10.0
-      use_rotate_to_heading: true
+      # OFF: rotate-to-heading commands pure wz, which this policy tracks terribly (it creeps
+      # sideways instead of turning in place — measured minutes of vx=0 rotation drifting the
+      # robot 7 m off-path into a corner). With it off RPP always walks (vx >= the 0.35 floor)
+      # with curvature-limited wz — the regime the policy tracks well.
+      use_rotate_to_heading: false
       allow_reversing: false
 
 local_costmap:
@@ -94,8 +106,11 @@ local_costmap:
           max_obstacle_height: 2.0
           clearing: true
           marking: true
-          raytrace_max_range: 8.0
-          obstacle_max_range: 6.0
+          inf_is_valid: true        # inf misses (REP-117) raytrace-clear to range_max: the
+          #                           costmap carries the "explored free space" signal that
+          #                           karto's /map cannot (it only carves along hit rays)
+          raytrace_max_range: 5.0   # = lidar RANGE_MAX
+          obstacle_max_range: 4.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -110,15 +125,21 @@ global_costmap:
       transform_tolerance: 0.5
       update_frequency: 1.0
       publish_frequency: 1.0
-      resolution: 0.05
+      always_send_full_costmap: true   # frontier_explorer consumes the full grid at 1 Hz
+      # 0.1, not 0.05: at 40x40 m this is 160k cells vs 640k — planning-scale is enough here
+      # (the 0.05 local costmap does tight avoidance), and 640k cells caused transient
+      # "Costmap timed out waiting for update" planner failures at 1 Hz full publishes.
+      resolution: 0.1
       # ROLLING, robot-centred global costmap (NOT bound to slam_toolbox's partial /map). With a
       # static map the planner aborts "Robot is out of bounds of the costmap" whenever the robot
-      # sits just outside the small explored map. A 20x20 m rolling window keeps the robot always
-      # in-bounds; obstacles come live from /scan, and NavfnPlanner(allow_unknown) plans through
-      # the unmapped cells. The persistent map still lives in slam /map + the symbolic world model.
+      # sits just outside the small explored map. A 40x40 m rolling window keeps the robot always
+      # in-bounds AND covers the whole 20 m single room from anywhere inside it (a frontier on the
+      # far wall can be ~19 m away per axis; goals outside the window are unplannable); obstacles
+      # come live from /scan, and NavfnPlanner(allow_unknown) plans through the unmapped cells.
+      # The persistent map still lives in slam /map + the symbolic world model.
       rolling_window: true
-      width: 20
-      height: 20
+      width: 40
+      height: 40
       track_unknown_space: true
       footprint: "[ [0.45, 0.20], [0.45, -0.20], [-0.45, -0.20], [-0.45, 0.20] ]"
       plugins: ["obstacle_layer", "inflation_layer"]
@@ -132,8 +153,11 @@ global_costmap:
           max_obstacle_height: 2.0
           clearing: true
           marking: true
-          raytrace_max_range: 8.0
-          obstacle_max_range: 6.0
+          inf_is_valid: true        # inf misses (REP-117) raytrace-clear to range_max: the
+          #                           costmap carries the "explored free space" signal that
+          #                           karto's /map cannot (it only carves along hit rays)
+          raytrace_max_range: 5.0   # = lidar RANGE_MAX
+          obstacle_max_range: 4.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

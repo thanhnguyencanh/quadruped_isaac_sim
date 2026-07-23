@@ -293,6 +293,23 @@ SimulationManager.set_physics_dt(1.0 / PHYSICS_HZ)
 
 _spawn = list(args.spawn) if args.spawn else [0.0, 0.0, 0.8]
 spot = SpotFlatTerrainPolicy(prim_path=SPOT_PRIM, position=_spawn)
+# Defense-in-depth: a SLEEPING articulation ignores later joint-drive targets, so zero the
+# sleep thresholds BEFORE play (parsed at articulation creation; see the post-initialize()
+# patch too). NOTE: the stand-still freeze we chased turned out to be the POLICY's trained
+# standing attractor (see nav2_params.yaml speed floors), not sleep — but sleep would
+# produce the identical symptom, so keep it disabled.
+import omni.usd
+from pxr import PhysxSchema, Usd, UsdPhysics
+_n_roots = 0
+for _p in Usd.PrimRange(omni.usd.get_context().get_stage().GetPrimAtPath(SPOT_PRIM)):
+    if _p.HasAPI(UsdPhysics.ArticulationRootAPI):
+        _art = PhysxSchema.PhysxArticulationAPI.Apply(_p)
+        _art.CreateSleepThresholdAttr().Set(0.0)
+        _art.CreateStabilizationThresholdAttr().Set(0.0)
+        _n_roots += 1
+print(f"[perception] pre-play sleep-threshold patch on {_n_roots} articulation root(s)", flush=True)
+
+
 class LidarNode(Node):
     """Virtual GIMBAL-STABILIZED 360-deg 2D lidar -> /scan in the body-fixed `base_scan` frame.
 
@@ -312,7 +329,18 @@ class LidarNode(Node):
     #                      above Spot's own body (no self-hits), below the 2 m walls,
     #                      and floor-relative so the plane stays valid after a stair teleport
     RANGE_MIN = 0.3
-    RANGE_MAX = 8.0      # matches slam_toolbox min/max_laser_range
+    RANGE_MAX = 5.0      # raycast reach = slam_toolbox max_laser_range (karto rangeThreshold);
+    #                      deliberately SMALLER than the 20 m single room so one 360-deg sweep
+    #                      cannot finish the map — frontier exploration needs unknown space
+    # NO-RETURN beams are float('inf') per REP-117 and this is LOAD-BEARING: karto matches
+    # scans with its UNFILTERED point readings (only NaN/inf excluded — Karto.h Update()/
+    # GridLookup::ComputeOffsets), so ANY finite miss value forms a rotation-invariant ring
+    # that out-correlates the real walls. Verified failure: every scan pose snapped onto the
+    # previous scan (odometry motion cancelled), headings arbitrary -> the map collapsed to a
+    # single 5 m free disc that FOLLOWED the robot, streaked walls, map->odom 2 m / 90 deg off.
+    # Free-space clearing for exploration comes from the nav2 costmaps instead: their scan
+    # sources set inf_is_valid: true, which raytrace-clears inf beams to range_max. The slam
+    # /map maps geometry (walls) only — by karto design it carves free space along hit rays.
     PUBLISH_EVERY = 2    # main-loop ticks per scan (~12-15 Hz at the ~25-30 Hz render rate)
 
     def __init__(self, spot):
@@ -367,7 +395,7 @@ class LidarNode(Node):
             wx_, wy_ = cy * dx - sy * dy, sy * dx + cy * dy  # rotate beam into world by yaw
             hit = self._query.raycast_closest(origin, carb.Float3(wx_, wy_, 0.0), self.RANGE_MAX)
             d = float(hit.get("distance", 0.0)) if hit.get("hit") else float("inf")
-            ranges.append(d if d >= self.RANGE_MIN else float("inf"))
+            ranges.append(d if d >= self.RANGE_MIN else 0.0)  # <=range_min: ignored by karto
         sim_t = float(SimulationManager.get_simulation_time())
         now = RosTime(sec=int(sim_t), nanosec=int((sim_t - int(sim_t)) * 1e9))
         scan = LaserScan()
@@ -532,7 +560,11 @@ og.Controller.edit(
 simulation_app.update()
 
 # ---------------------------------------------------------------- control init (ORDER IS LOAD-BEARING)
+_phys_count = {"n": 0}  # diagnostic: proves the physics callback is (still) firing
+
+
 def on_physics_step(step_size, _context):
+    _phys_count["n"] += 1
     spot.forward(step_size, base_command)  # forward-only; NEVER initialize() in here
 
 
@@ -540,6 +572,12 @@ timeline = omni.timeline.get_timeline_interface()
 timeline.play()
 simulation_app.update()  # _on_play -> initialize_physics() creates the PhysX articulation view
 spot.initialize()  # commit position-control mode + PD gains to the live stepping view
+# Defense-in-depth (see the pre-play patch): keep sleep disabled on the live articulation
+# via the robot API as well. Must run AFTER initialize() — earlier the composed
+# articulation prim may not exist yet and the calls silently no-op.
+spot.robot.set_sleep_thresholds([0.0])
+spot.robot.set_stabilization_thresholds([0.0])
+print(f"[perception] articulation sleep thresholds: {spot.robot.get_sleep_thresholds()}", flush=True)
 simulation_app.update()  # bake one step of drive/gains state
 SimulationManager.register_callback(on_physics_step, IsaacEvents.POST_PHYSICS_STEP)
 simulation_app.update()
@@ -582,7 +620,16 @@ while simulation_app.is_running():
 
     if frame % 100 == 0:
         bc = base_command.cpu().numpy() if hasattr(base_command, "cpu") else np.asarray(base_command)
-        print(f"[perception] frame={frame} cmd={np.round(bc, 3)} base_xyz={np.round(_base_xyz(), 3)}", flush=True)
+        try:
+            _dof0 = float(wp.to_torch(spot.robot.get_dof_positions()).cpu().numpy().reshape(-1)[0])
+        except Exception:  # noqa: BLE001
+            _dof0 = float("nan")
+        try:
+            _act0 = float(spot._current_action.reshape(-1)[0])
+        except Exception:  # noqa: BLE001
+            _act0 = float("nan")
+        print(f"[perception] frame={frame} cmd={np.round(bc, 3)} base_xyz={np.round(_base_xyz(), 3)} "
+              f"phys={_phys_count['n']} dof0={_dof0:.4f} act0={_act0:.4f}", flush=True)
 
     frame += 1
     if args.steps and frame >= args.steps:

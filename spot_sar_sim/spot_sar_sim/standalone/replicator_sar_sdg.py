@@ -73,7 +73,7 @@ writer.attach([render_product])
 with rep.trigger.on_frame(num_frames=args.frames):
     with camera:
         rep.modify.pose(
-            position=rep.distribution.uniform((-3.5, -3.5, 1.0), (3.5, 3.5, 2.8)),
+            position=rep.distribution.uniform((-8.0, -8.0, 1.0), (8.0, 8.0, 2.8)),
             look_at=(0.0, 0.0, 0.3),
         )
 

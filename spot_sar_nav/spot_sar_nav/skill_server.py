@@ -4,14 +4,14 @@ Hosts the /skill action (spot_sar_msgs/action/Skill); the Task Executive (Phase 
 Skill goal per PDDL action and branches on success/failure to replan. Skills:
 
   go_to_location  -> Nav2 NavigateToPose to the target location's centroid (from /world_model)
-  explore         -> drive to the nearest/biggest /map frontier (NavigateToPose)
+  explore         -> drive to the biggest global-costmap frontier (NavigateToPose)
   observe         -> dwell and report how many victims are currently seen on /victims
   report          -> mark a victim reported (logged; the executive tracks reported state)
 
 Runs under a MultiThreadedExecutor with a ReentrantCallbackGroup so the action server can call
 the Nav2 action client and block on its result without deadlocking.
 
-  ros2 run spot_sar_nav skill_server --ros-args -p use_sim_time:=true -p planner_frame:=map
+  ros2 run spot_sar_nav skill_server --ros-args -p use_sim_time:=true
 """
 import time
 
@@ -36,7 +36,9 @@ from spot_sar_nav.frontier_explorer import find_frontiers
 class SkillServer(Node):
     def __init__(self):
         super().__init__("skill_server")
-        self.declare_parameter("planner_frame", "map")
+        # odom, not map: world-model/victim positions are grounded in odom, nav runs in odom,
+        # and the explore skill's frontiers come from the odom-framed global costmap.
+        self.declare_parameter("planner_frame", "odom")
         self.declare_parameter("observe_dwell", 3.0)
         self.frame = self.get_parameter("planner_frame").value
         self.observe_dwell = float(self.get_parameter("observe_dwell").value)
@@ -51,7 +53,11 @@ class SkillServer(Node):
         _latched = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
         self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
-        self.create_subscription(OccupancyGrid, "/map", self._on_map, 1, callback_group=self.cb)
+        # global costmap, not /map: with REP-117 inf misses karto only carves free space along
+        # hit rays, so /map starves frontier detection; the costmap raytrace-clears inf beams
+        # (inf_is_valid) and is the "explored free space" source (same as frontier_explorer).
+        self.create_subscription(OccupancyGrid, "/global_costmap/costmap", self._on_map, 1,
+                                 callback_group=self.cb)
         self.create_subscription(VictimArray, "/victims", self._on_vic, 10, callback_group=self.cb)
         self.create_subscription(String, "/door_states", self._on_door_state, _latched,
                                  callback_group=self.cb)
@@ -194,7 +200,7 @@ class SkillServer(Node):
 
         elif skill == "explore":
             if self.grid is None:
-                res.success, res.message = False, "no /map yet"
+                res.success, res.message = False, "no costmap yet"
             else:
                 info = self.grid.info
                 cents = find_frontiers(self.grid.data, info.width, info.height, info.resolution,

@@ -12,24 +12,45 @@ python). pxr / isaacsim imports happen at call time so importing this module is 
 touches USD once the SimulationApp exists.
 """
 
-# room: 10 x 10 m, walls 2 m tall. Each entry: (name, center, scale[x,y,z]).
+# room: 20 x 20 m, walls 2 m tall. Each entry: (name, center, scale[x,y,z]).
+# Sized against the lidar's 5 m range: a single 360-deg sweep from the spawn covers only
+# ~20% of the floor area, so frontier exploration has real unknown space to chase.
 WALL_COLOR = (0.6, 0.6, 0.6)
 WALLS = [
-    ("wall_n", (5.0, 0.0, 1.0), (0.2, 10.0, 2.0)),
-    ("wall_s", (-5.0, 0.0, 1.0), (0.2, 10.0, 2.0)),
-    ("wall_e", (0.0, -5.0, 1.0), (10.0, 0.2, 2.0)),
-    ("wall_w", (0.0, 5.0, 1.0), (10.0, 0.2, 2.0)),
+    ("wall_n", (10.0, 0.0, 1.0), (0.2, 20.0, 2.0)),
+    ("wall_s", (-10.0, 0.0, 1.0), (0.2, 20.0, 2.0)),
+    ("wall_e", (0.0, -10.0, 1.0), (20.0, 0.2, 2.0)),
+    ("wall_w", (0.0, 10.0, 1.0), (20.0, 0.2, 2.0)),
 ]
 VICTIM_COLOR = (1.0, 0.35, 0.0)
-# victims spread across the room so the robot must navigate between them.
+# victims spread across the room, ALL beyond the lidar's 5 m first-scan radius from the
+# spawn at the origin: the robot must explore before the camera can find any of them.
 VICTIM_POS = [
-    (3.0, 1.5, 0.3),
-    (3.0, -2.5, 0.3),
-    (-3.0, 2.5, 0.3),
+    (7.0, 4.0, 0.3),
+    (5.5, -7.0, 0.3),
+    (-7.0, 6.0, 0.3),
 ]
 # a non-victim distractor (blue), labelled so a learned detector can be trained to ignore it.
 DISTRACTOR_COLOR = (0.1, 0.2, 0.9)
-DISTRACTOR_POS = (-2.0, -3.0, 0.3)
+DISTRACTOR_POS = (-5.0, -6.5, 0.3)
+
+# collapsed INTERIOR WALL segments (2 m tall, like the outer walls). Load-bearing for both
+# SLAM and safety, not decor:
+#  * karto sizes its occupancy grid to the bounding box of actual HITS (miss beams don't
+#    count), so in an empty 20 m room a 5 m lidar clears almost nothing — the map can only
+#    grow where beams hit structure. These segments guarantee returns within range from
+#    anywhere, and their occlusion shadows create genuine frontiers to explore.
+#  * they must be UN-CLIMBABLE: small crates trap the legged policy (Spot climbs a 0.6 m box
+#    and gets high-centered — observed stuck at +0.23 m body height). 2 m walls stop it dead.
+# Each entry: (center(x, y), scale(sx, sy, sz)); 0.2 thick, corridors kept >= 2 m wide.
+RUBBLE_COLOR = (0.5, 0.45, 0.4)
+RUBBLE = [
+    ((4.0, 0.0), (0.2, 6.0, 2.0)),    # vertical, splits the east half
+    ((-4.0, 3.0), (6.0, 0.2, 2.0)),   # horizontal, walls off the NW victim pocket
+    ((0.0, -4.5), (7.0, 0.2, 2.0)),   # horizontal, walls off the south area
+    ((-6.5, -3.0), (0.2, 5.0, 2.0)),  # vertical, west pocket with the distractor
+    ((2.0, 6.5), (5.0, 0.2, 2.0)),    # horizontal, north pocket
+]
 
 # Isaac People characters used as human victims (relative to assets_root_path). Cycled across
 # victim positions. These are realistic, textured, standing humans -> a pretrained YOLO 'person'
@@ -169,6 +190,13 @@ def build_sar_scene(label_semantics=False, humans=True, assets_root_path=None):
     for name, pos, scale in WALLS:
         p = _box(define_prim, UsdGeom, Gf, f"/World/{name}", pos, scale, WALL_COLOR)
         _add_static_collider(UsdPhysics, p)
+
+    for i, ((rx, ry), (sx, sy, sz)) in enumerate(RUBBLE):
+        p = _box(define_prim, UsdGeom, Gf, f"/World/Rubble_{i}", (rx, ry, sz / 2.0),
+                 (sx, sy, sz), RUBBLE_COLOR)
+        _add_static_collider(UsdPhysics, p)
+        if label_semantics:
+            _label(p, "rubble")
 
     victims = _victims_or_humans(define_prim, UsdGeom, UsdShade, Sdf, Gf, list(VICTIM_POS),
                                  humans, assets_root_path, label_semantics)

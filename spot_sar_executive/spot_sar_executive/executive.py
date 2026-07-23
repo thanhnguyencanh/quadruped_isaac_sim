@@ -83,7 +83,7 @@ def parse_action(action: str):
 class TaskExecutive(Node):
     def __init__(self):
         super().__init__("task_executive")
-        self.declare_parameter("planner_frame", "map")
+        self.declare_parameter("planner_frame", "odom")  # nav + world model live in odom
         self.declare_parameter("cycle_period", 3.0)
         self.declare_parameter("dry_run", False)
         # "grid" (cell mission) | "doors" (floor demo) | "building" (two-floor stairs demo)

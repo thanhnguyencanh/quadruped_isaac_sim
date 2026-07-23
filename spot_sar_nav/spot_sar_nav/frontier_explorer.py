@@ -16,6 +16,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
@@ -72,16 +73,29 @@ def find_frontiers(data, width, height, resolution, origin_x, origin_y,
 class FrontierExplorer(Node):
     def __init__(self):
         super().__init__("frontier_explorer")
-        self.declare_parameter("map_topic", "/map")
+        # Frontiers come from the GLOBAL COSTMAP, not slam's /map: misses are inf (REP-117),
+        # which karto ignores entirely (finite miss markers poison its scan matcher — see
+        # slam_toolbox.yaml), so /map only carves free space along hit rays and would starve
+        # frontier detection. The costmap raytrace-clears inf beams (inf_is_valid: true) and
+        # is published as an OccupancyGrid too (-1 unknown / 0..100 cost) — same math applies.
+        # It lives in the odom frame, so goals skip the map->odom transform entirely.
+        self.declare_parameter("map_topic", "/global_costmap/costmap")
         self.declare_parameter("min_cluster", 8)
         self.declare_parameter("free_thresh", 25)
-        self.declare_parameter("planner_frame", "map")
+        self.declare_parameter("planner_frame", "odom")
         self.declare_parameter("robot_base_frame", "base_link")
         self.declare_parameter("replan_period", 2.0)
         # Frontiers closer than this to the robot are UNCLEAREABLE: they sit inside the depth
         # camera's minimum-range blind zone (range_min 0.3 + the body footprint), so standing
         # "on" them never marks them known — chasing one livelocks exploration in place.
         self.declare_parameter("min_frontier_dist", 1.0)
+        # Some frontiers are UNPLANNABLE artifacts (raytrace aliasing can leak free cells
+        # through a grazing-angle wall, putting a frontier outside the building). Without a
+        # blacklist the explorer re-sends them forever: measured 472 goals / 875 aborts in
+        # 240 s, overloading the planner ("Costmap timed out waiting for update").
+        self.declare_parameter("blacklist_radius", 0.7)
+        self.declare_parameter("blacklist_ttl", 180.0)   # map growth may legitimize an area later
+        self.declare_parameter("fail_cooldown", 3.0)     # pause after a failed goal (no churn)
 
         self.frame = self.get_parameter("planner_frame").value
         self.base = self.get_parameter("robot_base_frame").value
@@ -90,6 +104,9 @@ class FrontierExplorer(Node):
 
         self.grid = None
         self.busy = False
+        self._blacklist = []  # (x, y, stamp_sec) of goals that did not succeed
+        self._cooldown_until = 0.0
+        self._last_goal = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
@@ -134,6 +151,18 @@ class FrontierExplorer(Node):
             self.get_logger().info("only blind-zone frontiers remain — exploration complete.",
                                    throttle_duration_sec=10.0)
             return
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now < self._cooldown_until:
+            return
+        ttl = float(self.get_parameter("blacklist_ttl").value)
+        self._blacklist = [b for b in self._blacklist if now - b[2] < ttl]
+        br = float(self.get_parameter("blacklist_radius").value)
+        cents = [c for c in cents
+                 if all(math.hypot(c[0] - bx, c[1] - by) > br for bx, by, _t in self._blacklist)]
+        if not cents:
+            self.get_logger().info("all remaining frontiers blacklisted — waiting for map growth",
+                                   throttle_duration_sec=10.0)
+            return
         # pick the frontier maximizing size / distance (nearest, biggest)
         best = max(cents, key=lambda c: c[2] / (1.0 + math.hypot(c[0] - rxy[0], c[1] - rxy[1])))
         self._go(best[0], best[1])
@@ -152,15 +181,32 @@ class FrontierExplorer(Node):
         goal.pose.pose.position.y = float(y)
         goal.pose.pose.orientation.w = 1.0
         self.busy = True
+        self._last_goal = (float(x), float(y))
         self.get_logger().info(f"exploring frontier @ ({x:.2f}, {y:.2f})")
         self.nav.send_goal_async(goal).add_done_callback(self._on_goal_resp)
 
     def _on_goal_resp(self, fut):
         gh = fut.result()
         if not gh.accepted:
-            self.busy = False
+            self._on_fail()
             return
-        gh.get_result_async().add_done_callback(lambda _f: setattr(self, "busy", False))
+        gh.get_result_async().add_done_callback(self._on_result)
+
+    def _on_result(self, fut):
+        if fut.result().status == GoalStatus.STATUS_SUCCEEDED:
+            self.busy = False
+        else:
+            self._on_fail()
+
+    def _on_fail(self):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self._last_goal is not None:
+            self._blacklist.append((self._last_goal[0], self._last_goal[1], now))
+            self.get_logger().info(
+                f"goal @ ({self._last_goal[0]:.2f}, {self._last_goal[1]:.2f}) failed — "
+                f"blacklisted ({len(self._blacklist)} active)")
+        self._cooldown_until = now + float(self.get_parameter("fail_cooldown").value)
+        self.busy = False
 
 
 def main(args=None):

@@ -61,7 +61,7 @@ def generate_launch_description():
         actions=[
             ExecuteProcess(
                 cmd=[VENV_PY, EXEC_BIN, "--ros-args", "-p", "use_sim_time:=true",
-                     "-p", "planner_frame:=map", "-p", "cycle_period:=3.0",
+                     "-p", "planner_frame:=odom", "-p", "cycle_period:=3.0",
                      "-p", "domain_profile:=building"],
                 output="screen",
             )

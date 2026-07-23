@@ -30,7 +30,14 @@ slam_toolbox:
     map_update_interval: 1.0
     resolution: 0.05
     min_laser_range: 0.3
-    max_laser_range: 8.0
+    max_laser_range: 5.0   # = lidar RANGE_MAX / scan range_max (karto rangeThreshold; kept
+    #                        < room size for exploration). Misses are inf (REP-117) — NEVER
+    #                        republish them as finite values: karto's matcher uses UNFILTERED
+    #                        readings and a finite miss ring is rotation-invariant, collapsing
+    #                        every scan pose onto the previous one (map became a 5 m disc that
+    #                        followed the robot). Karto ignores inf: no clearing on misses —
+    #                        the "explored free space" signal lives in the nav2 costmaps
+    #                        (inf_is_valid: true), which the frontier explorer reads.
     minimum_time_interval: 0.2
     transform_timeout: 0.5
     tf_buffer_duration: 30.0

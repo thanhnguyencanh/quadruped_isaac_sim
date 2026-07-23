@@ -17,7 +17,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
-            DeclareLaunchArgument("planner_frame", default_value="map"),
+            DeclareLaunchArgument("planner_frame", default_value="odom"),
             Node(
                 package="spot_sar_nav",
                 executable="skill_server",
