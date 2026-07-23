@@ -359,24 +359,6 @@ reusing its depth back-projection + tf2 + overlay/markers — only the detection
 
 ### Check SLAM (2D + 3D mapping), path planning and navigation
 
-**Sensor split: the LIDAR maps and navigates; the camera only detects victims.** By default `/scan`
-comes from a **stabilized virtual 360° lidar** in the sim app: PhysX rays cast horizontally from a
-mount that follows the robot's position but *never its roll/pitch* — every scan is level by
-construction (no tilt corruption, no floor strikes) with 360° coverage instead of the camera's 67°.
-Range is capped at **5 m** — deliberately smaller than the 20 m room, so a single sweep cannot
-finish the map and the frontier explorer always has unknown space to chase. No-return beams are
-`inf` per REP-117 — **never republish them as finite values**: karto's scan matcher uses its
-unfiltered readings, and a finite "miss ring" is rotation-invariant, so it out-correlates the
-real walls and collapses every scan pose onto the previous one (the map degenerates into a 5 m
-free disc that follows the robot). Division of labor: **slam's `/map` maps geometry** (walls,
-carved free space along hit rays only), while the **nav2 costmaps carry "explored free space"**
-(`inf_is_valid: true` raytrace-clears the inf beams) — the frontier explorer and the `explore`
-skill therefore read `/global_costmap/costmap` (odom frame), not `/map`.
-Walls, doors and **human victims are solid** (collision-verified: Spot driven full-speed into a wall
-and a person stops at their face), so the lidar sees them and costmaps avoid them. Sim-idealized on
-purpose — a real robot would need a gimbal or scan motion-compensation (report limitation).
-`lidar:=false` restores the legacy camera-depth scan + tilt gate (for comparison/ablation).
-
 `sar_system.launch.py` is the full nav stack **without** the executive (Isaac + lidar + camera +
 `slam_toolbox` + Nav2), so you can send a goal by hand and watch Spot drive to it:
 
@@ -483,6 +465,8 @@ with no shader-compile freeze. Preloaded displays:
 | Victims | `/victims/markers` | 3D spheres at detected victim positions (in `odom`/`map`) |
 | LaserScan | `/scan` | the stabilized 360° lidar (mapping/mission) |
 | Map | `/map` | the slam_toolbox occupancy grid (mapping/mission) |
+| OctoMap 3D | `/occupied_cells_vis_array` | 3D voxel map (needs `mapping3d.launch.py` running) |
+| Camera Cloud | `/camera/points` | live depth point cloud (off by default — needs `mapping3d.launch.py`) |
 | Global/Local Costmap | `/global_costmap/costmap`, `/local_costmap/costmap` | Nav2 costmaps (off by default — tick to enable) |
 | Nav2 Path | `/plan` | the planned path |
 | TF | — | the `odom→base_link→camera_*` frames |
