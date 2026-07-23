@@ -19,7 +19,7 @@ NOTES:
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, TimerAction, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -60,6 +60,10 @@ def generate_launch_description():
         ],
     )
     return LaunchDescription([
+        # rcutils disables ANSI colors when stdout is a PIPE (always true under ros2
+        # launch), so WARN mission-tracking lines printed white. Force colors: WARN's
+        # yellow is the whole point of the [STATUS]/world_model/REPORTED highlighting.
+        SetEnvironmentVariable("RCUTILS_COLORIZED_OUTPUT", "1"),
         DeclareLaunchArgument("gui", default_value="true"),
         sar_system, skills, world_model, executive,
     ])

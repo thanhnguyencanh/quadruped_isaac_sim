@@ -18,7 +18,7 @@ WARNING: this is the FULL heavy stack (Isaac+RTX render + slam_toolbox + Nav2). 
 memory headroom — run it on a freshly booted machine (clear swap) or it will OOM-kill nodes.
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -45,6 +45,10 @@ def generate_launch_description():
         )
     )
     return LaunchDescription([
+        # rcutils disables ANSI colors when stdout is a PIPE (always true under ros2
+        # launch), so WARN mission-tracking lines printed white. Force colors: WARN's
+        # yellow is the whole point of the [STATUS]/world_model/REPORTED highlighting.
+        SetEnvironmentVariable("RCUTILS_COLORIZED_OUTPUT", "1"),
         DeclareLaunchArgument("floor", default_value="false"),
         DeclareLaunchArgument("building", default_value="false"),
         DeclareLaunchArgument("humans", default_value="true"),
