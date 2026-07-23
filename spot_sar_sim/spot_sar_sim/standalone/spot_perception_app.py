@@ -532,6 +532,11 @@ og.Controller.edit(
             ("PubRGB", "isaacsim.ros2.bridge.ROS2CameraHelper"),
             ("PubDepth", "isaacsim.ros2.bridge.ROS2CameraHelper"),
             ("PubCamInfo", "isaacsim.ros2.bridge.ROS2CameraInfoHelper"),
+            # depth-namespace twin: Jazzy's depth_image_proc (image_transport CameraSubscriber)
+            # derives the info topic from the IMAGE topic's namespace -> /camera/depth/camera_info
+            # and IGNORES camera_info remaps; without this twin the 3D pipeline (point cloud ->
+            # octomap) silently produces nothing. Same render product = identical intrinsics.
+            ("PubCamInfoDepth", "isaacsim.ros2.bridge.ROS2CameraInfoHelper"),
         ],
         keys.SET_VALUES: [
             ("RenderProduct.inputs:cameraPrim", [P(CAMERA_PRIM)]),
@@ -545,6 +550,8 @@ og.Controller.edit(
             ("PubDepth.inputs:frameId", CAMERA_OPTICAL_FRAME),
             ("PubCamInfo.inputs:topicName", CAM_INFO_TOPIC),
             ("PubCamInfo.inputs:frameId", CAMERA_OPTICAL_FRAME),
+            ("PubCamInfoDepth.inputs:topicName", "/camera/depth/camera_info"),
+            ("PubCamInfoDepth.inputs:frameId", CAMERA_OPTICAL_FRAME),
         ],
         keys.CONNECT: [
             ("CamTick.outputs:tick", "RenderProduct.inputs:execIn"),
@@ -553,7 +560,9 @@ og.Controller.edit(
             ("RenderProduct.outputs:execOut", "PubCamInfo.inputs:execIn"),
             ("RenderProduct.outputs:renderProductPath", "PubRGB.inputs:renderProductPath"),
             ("RenderProduct.outputs:renderProductPath", "PubDepth.inputs:renderProductPath"),
+            ("RenderProduct.outputs:execOut", "PubCamInfoDepth.inputs:execIn"),
             ("RenderProduct.outputs:renderProductPath", "PubCamInfo.inputs:renderProductPath"),
+            ("RenderProduct.outputs:renderProductPath", "PubCamInfoDepth.inputs:renderProductPath"),
         ],
     },
 )
@@ -590,7 +599,7 @@ DOOR_RATE = 0.02  # fraction of slab travel per loop tick (~1-2 s to fully open)
 
 print(
     "[perception] publishing /clock /joint_states /odom /tf "
-    "+ /camera/rgb/image_raw /camera/depth/image_raw /camera/rgb/camera_info; "
+    "+ /camera/rgb/image_raw /camera/depth/image_raw /camera/{rgb,depth}/camera_info; "
     "subscribing /cmd_vel" + ("; doors on /door_cmd -> /door_states" if door_node else "")
     + ("; stairs on /stairs_cmd -> /floor_state" if stair_node else "")
     + ("; STABILIZED 360-deg lidar on /scan in base_scan (static TF)" if lidar_node else "") + " (rclpy)",
