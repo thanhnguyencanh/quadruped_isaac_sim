@@ -376,7 +376,7 @@ ros2 launch spot_sar_bringup sar_system.launch.py     # Isaac + SLAM + Nav2 (hea
 ```
 Then, in another shell (`export ROS_DOMAIN_ID=42`):
 ```bash
-ros2 topic hz  /scan                     # ~12-15 Hz, 360 beams, frame lidar_link
+ros2 topic hz  /scan                     # ~12-15 Hz, 360 beams, frame base_scan
 ros2 topic echo --once /map              # slam_toolbox occupancy grid → SLAM works
 ros2 run tf2_ros tf2_echo map odom       # the map→odom transform is live
 # path planning + navigation — send a Nav2 goal, watch Spot walk there
@@ -472,7 +472,7 @@ with no shader-compile freeze. Preloaded displays:
 | Camera RAW | `/camera/rgb/image_raw` | the raw RGB stream |
 | Detections | `/camera/rgb/detections` | RGB **+ green detection boxes** + confidence/range labels |
 | Victims | `/victims/markers` | 3D spheres at detected victim positions (in `odom`/`map`) |
-| LaserScan | `/scan` | the depth-derived lidar (mapping/mission) |
+| LaserScan | `/scan` | the stabilized 360° lidar (mapping/mission) |
 | Map | `/map` | the slam_toolbox occupancy grid (mapping/mission) |
 | Global/Local Costmap | `/global_costmap/costmap`, `/local_costmap/costmap` | Nav2 costmaps (off by default — tick to enable) |
 | Nav2 Path | `/plan` | the planned path |
