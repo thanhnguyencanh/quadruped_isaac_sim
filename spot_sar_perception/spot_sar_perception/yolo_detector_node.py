@@ -67,11 +67,28 @@ class YoloVictimDetector(VictimDetector):
         for box in res.boxes:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             u = (x1 + x2) / 2.0
-            v = y1 + 0.65 * (y2 - y1)  # lower-centre -> torso/legs: robust depth, lands on the body
+            v = y1 + 0.65 * (y2 - y1)
             ui, vi = int(round(u)), int(round(v))
-            z = self._depth_at(depth, ui, vi)
-            if not np.isfinite(z):
-                continue
+            # Depth = 25th percentile over the TORSO region (central 50% width, 30-80%
+            # height) — NOT a single-point patch: at 8-9 m a person is only a few px wide,
+            # the centre pixel often lands on BACKGROUND between the legs/beside the torso,
+            # and the median of a tiny patch returns the wall depth — measured 10 phantom
+            # "victims" back-projected onto the walls BEHIND real people. The person is
+            # always CLOSER than the background, so a low percentile locks onto the body.
+            h_img, w_img = depth.shape[:2]
+            uu0 = int(max(0, x1 + 0.25 * (x2 - x1)))
+            uu1 = int(min(w_img, x1 + 0.75 * (x2 - x1) + 1))
+            vv0 = int(max(0, y1 + 0.30 * (y2 - y1)))
+            vv1 = int(min(h_img, y1 + 0.80 * (y2 - y1) + 1))
+            patch = depth[vv0:vv1, uu0:uu1].astype(np.float32).reshape(-1)
+            patch = patch[np.isfinite(patch) & (patch > 0.0) & (patch < self.max_depth)]
+            if patch.size < 8:
+                continue  # box too small/far to localize reliably
+            z = float(np.percentile(patch, 25))
+            if z > 8.0:
+                continue  # beyond reliable victim-localization range (and beyond any wall hit
+                #           that could masquerade as a person: pure-background YOLO false
+                #           positives project onto walls at 9-10 m)
             x = (u - cx0) * z / fx
             y = (v - cy0) * z / fy
             pt = self._to_target(x, y, z, rgb_msg.header.stamp)

@@ -3,7 +3,8 @@
 Composes the whole autonomy stack:
   * sar_system.launch.py : Isaac + Spot + RGB-D camera + victim detector + depth->/scan + SLAM + Nav2
   * skills.launch.py     : the /skill action server (go_to_location | explore | observe | report)
-  * world_model_node     : symbol grounding /victims+TF -> /world_model (fixed_frame=map)
+  * world_model_node     : symbol grounding /victims+TF -> /world_model (fixed_frame=odom,
+        matching nav + skills: goals go out in odom, so grounded centroids must be odom too)
   * task_executive       : the SENSE->GROUND->PLAN->ACT->MONITOR->REPLAN loop (run via the planning venv)
 
   ros2 launch spot_sar_bringup mission.launch.py
@@ -45,7 +46,7 @@ def generate_launch_description():
         executable="world_model_node",
         name="world_model",
         output="screen",
-        parameters=[{"use_sim_time": True, "fixed_frame": "map"}],
+        parameters=[{"use_sim_time": True, "fixed_frame": "odom"}],
     )
     # The executive needs the planning venv (unified_planning). Delay it so SLAM/Nav2 come up first.
     executive = TimerAction(

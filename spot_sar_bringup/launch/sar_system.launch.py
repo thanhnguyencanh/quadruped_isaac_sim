@@ -7,7 +7,7 @@ Composes:
 The "brain" is started SEPARATELY because it needs the planning venv (unified_planning):
   source /opt/ros/jazzy/setup.bash && source ~/unige_ws/install/setup.bash
   source ~/sar_planning_venv/bin/activate
-  ros2 run spot_sar_planning world_model_node --ros-args -p use_sim_time:=true -p fixed_frame:=map
+  ros2 run spot_sar_planning world_model_node --ros-args -p use_sim_time:=true -p fixed_frame:=odom
   ros2 run spot_sar_executive task_executive   --ros-args -p use_sim_time:=true
 For pure coverage instead of the SAR mission:
   ros2 run spot_sar_nav frontier_explorer --ros-args -p use_sim_time:=true

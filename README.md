@@ -451,6 +451,21 @@ to → REPORTS** victims, replanning each cycle. (The executive runs under `~/sa
 `unige_legged` container ships it.) Offline PDDL sanity (no Isaac): the planner solves `domain.pddl` +
 a generated problem inside the planning venv.
 
+**Track the mission in the terminal** — the mission-level state is re-announced so the nav2/slam
+stream can't bury it:
+- `[STATUS] phase=EXPLORING|RESCUE|COMPLETE  action=<in-flight skill>  victims known/found/reported …`
+  — the executive's one-line dashboard, every 8 s.
+- `victim candidate vN … awaiting confirmation` / `*** VICTIM vN CONFIRMED ***` — a victim publishes
+  only after 3 merged sightings (one-off phantom projections never confirm).
+- `PLAN (N actions); next: …`, `ACT: skill …`, `MONITOR: … success=…`, `*** REPORTED victim N ***`
+  — the decision timeline.
+
+Mission semantics (partial observability): the executive **plans over victims whose cells are
+symbolically reachable, and senses toward the rest** — with no victims known it explores frontiers;
+with a known-but-unconnected victim it walks straight toward the victim's cell (frontier exploration
+alone can never connect it: the lidar clears the victim's area from afar while the symbolic graph
+grows only from physically visited cells).
+
 ### Visualize in RViz
 
 `ros2 launch spot_sar_bringup rviz.launch.py` (Quick start step 4) opens RViz preloaded with

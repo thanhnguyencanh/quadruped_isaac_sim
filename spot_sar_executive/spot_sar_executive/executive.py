@@ -24,6 +24,7 @@ client can run concurrently with the planning timer):
 -p dry_run:=true logs decisions WITHOUT sending skill goals (planning-loop test without the stack).
 parse_action() is module-level for unit testing.
 """
+import math
 import os
 import tempfile
 
@@ -108,11 +109,17 @@ class TaskExecutive(Node):
         self.busy = False
         self.last_action = None
         self.fail_count = 0
+        self.explore_done = False  # explore skill reported "no frontiers" -> area fully seen
+        self._goto_fail = {}       # victim-cell -> failed walk-toward attempts (fallback gating)
+        self.current_action = "idle"  # what is in flight right now (for the [STATUS] line)
 
         self.cb = ReentrantCallbackGroup()
         self.skill = ActionClient(self, Skill, "skill", callback_group=self.cb)
         self.create_subscription(WorldModel, "/world_model", self._on_wm, 10, callback_group=self.cb)
         self.create_timer(float(self.get_parameter("cycle_period").value), self._cycle, callback_group=self.cb)
+        # one-line mission dashboard for the launch terminal — the nav2/slam stream buries
+        # individual events, so the CURRENT state must be re-announced periodically.
+        self.create_timer(8.0, self._status, callback_group=self.cb)
         self.get_logger().info(
             f"task_executive up (dry_run={self.dry_run}, profile={self.profile}); domain={self.domain}")
 
@@ -132,8 +139,39 @@ class TaskExecutive(Node):
         loc_by_id = {v.id: self.wm.victim_location[i] for i, v in enumerate(self.wm.victims)}
         vids = [v.id for v in self.wm.victims if v.id not in self.reported and v.id not in self.blocked]
         if not vids:
-            self.get_logger().info("MISSION: all known victims reported (or none yet).",
-                                   throttle_duration_sec=10.0)
+            # No unreported victims KNOWN is not mission-done — victims may simply not have
+            # been SEEN yet (they spawn beyond the first camera view). Keep the SENSE loop
+            # moving: dispatch the explore skill (one costmap-frontier goal, blocks until nav
+            # finishes) until it reports the area fully explored. Idling here deadlocked the
+            # whole mission: robot never moves -> camera never sees -> world model never grows.
+            if self.explore_done:
+                self.get_logger().info(
+                    f"MISSION COMPLETE: area fully explored, {len(self.reported)} victim(s) reported.",
+                    throttle_duration_sec=30.0)
+                return
+            self._dispatch_sensing("explore")
+            return
+        # Plan ONLY over victims whose cells are symbolically REACHABLE (BFS from the
+        # robot's cell over connected edges). The goal is a conjunction: one victim in a
+        # disconnected cell makes the WHOLE problem unsolvable — observed: the robot stood
+        # ON v0 while v1's edgeless cell blocked every plan. Unreachable victims drive
+        # SENSING (walk-toward / explore) below until their cells connect.
+        adj = {}
+        for a, b in zip(self.wm.connected_a, self.wm.connected_b):
+            adj.setdefault(a, set()).add(b)
+            adj.setdefault(b, set()).add(a)
+        reach = set()
+        stack = [self.wm.robot_location] if self.wm.robot_location else []
+        while stack:
+            n = stack.pop()
+            if n in reach:
+                continue
+            reach.add(n)
+            stack.extend(adj.get(n, ()))
+        unreachable = [i for i in vids if loc_by_id[i] not in reach]
+        vids = [i for i in vids if loc_by_id[i] in reach]
+        if not vids:
+            self._sense_toward(unreachable, loc_by_id)
             return
         vlocs = [loc_by_id[i] for i in vids]
         found_here = [v for v in vids if v in self.found]
@@ -163,12 +201,107 @@ class TaskExecutive(Node):
             self.get_logger().warn(f"planner error: {e}")
             return
         if not plan:
-            # no plan for the remaining victims in the current (partial) map -> keep sensing.
-            self.get_logger().info("no plan (victims unreachable in current map) - keep exploring.",
-                                   throttle_duration_sec=10.0)
+            # No symbolic path to any remaining victim in the CURRENT visited-cell graph —
+            # the victim's cell only connects once the robot has walked near it. Exploration
+            # is what grows that graph, so DISPATCH it (this branch used to log "keep
+            # exploring" while nobody actually explored: victim known -> no plan -> idle).
+            # Reachable victims but still no plan: domain-level infeasibility (should be
+            # rare). Fall back to sensing toward them rather than idling.
+            self._sense_toward(vids, loc_by_id)
             return
         self.get_logger().info(f"PLAN ({len(plan)} actions); next: {plan[0]}")
         self._dispatch(plan[0])
+
+    # ---------------- STATUS (terminal dashboard) ----------------
+    def _status(self):
+        if self.wm is None:
+            self.get_logger().info("[STATUS] waiting for /world_model …")
+            return
+        known = len(self.wm.victims)
+        unreported = [v.id for v in self.wm.victims
+                      if v.id not in self.reported and v.id not in self.blocked]
+        if self.explore_done and not unreported:
+            phase = "COMPLETE"
+        elif unreported:
+            phase = "RESCUE"
+        else:
+            phase = "EXPLORING"
+        self.get_logger().info(
+            f"[STATUS] phase={phase}  action={self.current_action}  "
+            f"victims known={known} found={len(self.found)} reported={len(self.reported)}"
+            + (f" blocked={len(self.blocked)}" if self.blocked else "")
+            + f"  |  locations={len(self.wm.locations)} robot@{self.wm.robot_location or '?'}")
+
+    def _sense_toward(self, victim_ids, loc_by_id):
+        """SENSING: connect a known victim's cell to the visited graph. Walk straight toward
+        the nearest one (Nav2 plans through costmap-known space; en-route cells get visited);
+        after 2 failed walks fall back to victim-hinted frontier exploration; once the area
+        is fully explored, block the remaining victims so the mission can terminate.
+        Frontier exploration ALONE can never terminate this state: the lidar clears the
+        victim's area from afar while the symbolic graph grows only from physical visits."""
+        hint, best_d = "", None
+        rob = self._centroid(self.wm.robot_location) if self.wm.robot_location else None
+        for i in victim_ids:
+            c = self._centroid(loc_by_id[i])
+            d = math.hypot(c[0] - rob[0], c[1] - rob[1]) if (c and rob) else 0.0
+            if best_d is None or d < best_d:
+                best_d, hint = d, loc_by_id[i]
+        if hint and self._goto_fail.get(hint, 0) < 2:
+            self.get_logger().info(
+                f"no plan yet — walking toward victim cell {hint} to connect the graph.",
+                throttle_duration_sec=10.0)
+            self._dispatch_sensing("go_to_location", hint)
+        elif not self.explore_done:
+            self.get_logger().info(
+                f"no plan yet — exploring toward {hint or 'frontier'}.",
+                throttle_duration_sec=10.0)
+            self._dispatch_sensing("explore", hint)
+        else:
+            self.blocked.update(victim_ids)
+            self.get_logger().warn(
+                f"no plan and area fully explored — blocking victim(s) {victim_ids} as unreachable.")
+
+    # ---------------- ACT (sensing: explore / walk-toward-victim) ----------------
+    def _dispatch_sensing(self, skill_name: str, target: str = ""):
+        if self.dry_run:
+            self.get_logger().info(f"[dry_run] would dispatch sensing skill {skill_name}({target})",
+                                   throttle_duration_sec=10.0)
+            return
+        if not self.skill.server_is_ready():
+            self.get_logger().warn("/skill server not ready (is skill_server up?)",
+                                   throttle_duration_sec=5.0)
+            return
+        goal = Skill.Goal()
+        goal.skill = skill_name
+        goal.target = target
+        self.busy = True
+        self.current_action = f"{skill_name}({target})"
+        self.get_logger().info(f"ACT: skill {skill_name}({target})  [sensing]")
+        self.skill.send_goal_async(goal).add_done_callback(
+            lambda fut: self._on_sensing_resp(fut, skill_name, target))
+
+    def _on_sensing_resp(self, fut, skill_name, target):
+        gh = fut.result()
+        if gh is None or not gh.accepted:
+            self.get_logger().warn(f"sensing skill {skill_name} rejected")
+            self.busy = False
+            return
+        gh.get_result_async().add_done_callback(
+            lambda f: self._on_sensing_result(f, skill_name, target))
+
+    def _on_sensing_result(self, fut, skill_name, target):
+        result = fut.result().result
+        self.busy = False
+        self.current_action = "idle"
+        self.get_logger().info(
+            f"MONITOR: {skill_name}({target}) -> success={result.success} ({result.message})")
+        if skill_name == "explore" and not result.success and "no frontiers" in result.message:
+            self.explore_done = True
+        if skill_name == "go_to_location" and target:
+            if result.success:
+                self._goto_fail.pop(target, None)
+            else:
+                self._goto_fail[target] = self._goto_fail.get(target, 0) + 1
 
     # ---------------- ACT ----------------
     def _dispatch(self, action):
@@ -207,6 +340,7 @@ class TaskExecutive(Node):
         goal.skill = skill_name
         goal.target = target
         self.busy = True
+        self.current_action = f"{skill_name}({target})"
         self.get_logger().info(f"ACT: skill {skill_name}({target})  [from {action}]")
         self.skill.send_goal_async(goal).add_done_callback(
             lambda fut, a=action: self._on_goal_resp(fut, a))
@@ -221,6 +355,7 @@ class TaskExecutive(Node):
 
     # ---------------- MONITOR ----------------
     def _on_result(self, fut, action):
+        self.current_action = "idle"
         result = fut.result().result
         name, args = parse_action(action)
         ok = bool(result.success)

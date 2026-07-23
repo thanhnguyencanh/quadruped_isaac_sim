@@ -13,6 +13,7 @@ the Nav2 action client and block on its result without deadlocking.
 
   ros2 run spot_sar_nav skill_server --ros-args -p use_sim_time:=true
 """
+import math
 import time
 
 import rclpy
@@ -27,6 +28,8 @@ from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
+from tf2_ros import (Buffer, ConnectivityException, ExtrapolationException, LookupException,
+                     TransformListener)
 
 from spot_sar_msgs.action import Skill
 from spot_sar_msgs.msg import VictimArray, WorldModel
@@ -40,10 +43,17 @@ class SkillServer(Node):
         # and the explore skill's frontiers come from the odom-framed global costmap.
         self.declare_parameter("planner_frame", "odom")
         self.declare_parameter("observe_dwell", 3.0)
+        # explore skill: same blind-zone rule as frontier_explorer — the costmap's 5 m clearing
+        # disc yields a frontier RING around the robot whose cluster centroid lands ON the
+        # robot; without this filter explore "reaches" that goal instantly (0.1 s no-op
+        # treadmill: measured 287 instant successes / zero motion in one mission).
+        self.declare_parameter("min_frontier_dist", 1.0)
         self.frame = self.get_parameter("planner_frame").value
         self.observe_dwell = float(self.get_parameter("observe_dwell").value)
 
         self.cb = ReentrantCallbackGroup()
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.wm = None
         self.grid = None
         self.n_victims = 0
@@ -152,6 +162,13 @@ class SkillServer(Node):
             time.sleep(0.1)
         return False, f"door {door_id} did not open within {timeout:.0f}s"
 
+    def _robot_xy(self):
+        try:
+            t = self.tf_buffer.lookup_transform("odom", "base_link", rclpy.time.Time())
+            return (t.transform.translation.x, t.transform.translation.y)
+        except (LookupException, ConnectivityException, ExtrapolationException):
+            return None
+
     def _centroid(self, loc):
         if self.wm is None:
             return None
@@ -205,10 +222,24 @@ class SkillServer(Node):
                 info = self.grid.info
                 cents = find_frontiers(self.grid.data, info.width, info.height, info.resolution,
                                        info.origin.position.x, info.origin.position.y)
+                rxy = self._robot_xy()
+                min_d = float(self.get_parameter("min_frontier_dist").value)
+                if rxy is not None:
+                    cents = [c for c in cents
+                             if math.hypot(c[0] - rxy[0], c[1] - rxy[1]) > min_d]
                 if not cents:
                     res.success, res.message = False, "no frontiers (area explored)"
                 else:
-                    best = max(cents, key=lambda c: c[2])
+                    hint = self._centroid(target) if target else None
+                    if hint is not None:
+                        # goal-directed sensing: the executive passes the location cell of a
+                        # known-but-unreachable victim; head for the frontier CLOSEST to it
+                        best = min(cents, key=lambda c: math.hypot(c[0] - hint[0], c[1] - hint[1]))
+                    elif rxy is None:
+                        best = max(cents, key=lambda c: c[2])
+                    else:  # biggest-and-nearest, same ranking as frontier_explorer
+                        best = max(cents, key=lambda c: c[2]
+                                   / (1.0 + math.hypot(c[0] - rxy[0], c[1] - rxy[1])))
                     ok, msg = self._nav_to(best[0], best[1])
                     res.success, res.message = ok, f"explore frontier: {msg}"
 

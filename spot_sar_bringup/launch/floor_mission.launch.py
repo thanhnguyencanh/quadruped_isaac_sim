@@ -44,7 +44,7 @@ def generate_launch_description():
         executable="floor_world_model_node",
         name="floor_world_model",
         output="screen",
-        parameters=[{"use_sim_time": True, "fixed_frame": "map"}],
+        parameters=[{"use_sim_time": True, "fixed_frame": "odom"}],
     )
     # The executive needs the planning venv (unified_planning). Delay it so SLAM/Nav2 come up first.
     executive = TimerAction(

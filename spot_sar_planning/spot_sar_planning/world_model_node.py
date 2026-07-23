@@ -40,17 +40,24 @@ def cell_center(cid: str, cell: float):
 
 def merge_victim(known: list, x: float, y: float, z: float, conf: float, src: str,
                  merge_dist: float, next_id: int):
-    """Merge a detection into `known` (list of dicts) by proximity. Returns the new next_id."""
+    """Merge a detection into `known` (list of dicts) by proximity.
+
+    Returns (new_next_id, touched_record). Each record counts its `hits` — the node only
+    PUBLISHES victims with hits >= min_hits: single bad projections (image/TF timing skew
+    while the robot turns painted one-off phantoms 3-6 m off) never confirm, while a real
+    victim in view re-merges every detector frame and confirms in well under a second."""
     for kv in known:
         if math.hypot(kv["x"] - x, kv["y"] - y) < merge_dist:
             kv["x"] = 0.7 * kv["x"] + 0.3 * x
             kv["y"] = 0.7 * kv["y"] + 0.3 * y
             kv["z"] = 0.7 * kv["z"] + 0.3 * z
             kv["confidence"] = max(kv["confidence"], conf)
-            return next_id
-    known.append({"id": next_id, "x": x, "y": y, "z": z,
-                  "confidence": conf, "source": src, "reported": False})
-    return next_id + 1
+            kv["hits"] = kv.get("hits", 1) + 1
+            return next_id, kv
+    rec = {"id": next_id, "x": x, "y": y, "z": z,
+           "confidence": conf, "source": src, "reported": False, "hits": 1}
+    known.append(rec)
+    return next_id + 1, rec
 
 
 class WorldModelNode(Node):
@@ -58,11 +65,17 @@ class WorldModelNode(Node):
         super().__init__("world_model")
         self.declare_parameter("fixed_frame", "odom")  # "map" once SLAM is trusted
         self.declare_parameter("cell_size", 2.0)
-        self.declare_parameter("victim_merge_dist", 0.6)
+        # 2.0 (was 0.6): detections at 8-9 m carry >0.6 m depth/back-projection noise, so a
+        # 0.6 m radius FRAGMENTED each real victim into ~5 phantom ids (measured 15 "victims"
+        # for 3 humans). Scene victims are >=8 m apart; merges EMA-refine the position as the
+        # robot closes in.
+        self.declare_parameter("victim_merge_dist", 2.0)
+        self.declare_parameter("min_hits", 3)  # sightings before a victim is CONFIRMED/published
         self.declare_parameter("publish_period", 1.0)
         self.fixed_frame = self.get_parameter("fixed_frame").value
         self.cell = float(self.get_parameter("cell_size").value)
         self.merge_dist = float(self.get_parameter("victim_merge_dist").value)
+        self.min_hits = int(self.get_parameter("min_hits").value)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -97,8 +110,17 @@ class WorldModelNode(Node):
             p = self._to_fixed(v.pose.position, src)
             if p is None:
                 continue
-            self.next_id = merge_victim(self.victims, p[0], p[1], p[2],
-                                        float(v.confidence), v.source, self.merge_dist, self.next_id)
+            self.next_id, rec = merge_victim(self.victims, p[0], p[1], p[2],
+                                             float(v.confidence), v.source, self.merge_dist,
+                                             self.next_id)
+            if rec["hits"] == 1:
+                self.get_logger().info(
+                    f"victim candidate v{rec['id']} at ({p[0]:.2f}, {p[1]:.2f}) "
+                    f"(conf {float(v.confidence):.2f}, {v.source}) — awaiting confirmation")
+            elif rec["hits"] == self.min_hits:
+                self.get_logger().info(
+                    f"*** VICTIM v{rec['id']} CONFIRMED at ({rec['x']:.2f}, {rec['y']:.2f}) -> cell "
+                    f"{cell_id(rec['x'], rec['y'], self.cell)} (conf {rec['confidence']:.2f}) ***")
 
     def _robot_xy(self):
         try:
@@ -117,8 +139,9 @@ class WorldModelNode(Node):
             self.robot_cell = cell_id(rxy[0], rxy[1], self.cell)
             self.visited.add(self.robot_cell)
 
+        confirmed = [v for v in self.victims if v.get("hits", 1) >= self.min_hits]
         loc_set = set(self.visited)
-        for v in self.victims:
+        for v in confirmed:
             loc_set.add(cell_id(v["x"], v["y"], self.cell))
         locations = sorted(loc_set)
 
@@ -131,7 +154,11 @@ class WorldModelNode(Node):
         a_list, b_list = [], []
         for cid in locations:
             ix, iy = cell_indices(cid)
-            for nx, ny in ((ix + 1, iy), (ix, iy + 1)):
+            # 8-connected (diagonals included): the robot's cell trail is sampled at 1 Hz
+            # while walking 0.6 m/s, so consecutive visited cells are often DIAGONAL
+            # neighbours — with 4-connectivity the robot's own path was symbolically
+            # disconnected and the planner saw unreachable victims it had walked right past.
+            for nx, ny in ((ix + 1, iy), (ix, iy + 1), (ix + 1, iy + 1), (ix + 1, iy - 1)):
                 ncid = f"L_{nx}_{ny}"
                 if ncid in locset:
                     a_list.append(cid)
@@ -141,7 +168,7 @@ class WorldModelNode(Node):
         wm.robot_location = self.robot_cell
 
         wm.victims, wm.victim_location, wm.victim_reported = [], [], []
-        for v in self.victims:
+        for v in confirmed:
             vic = Victim()
             vic.header.frame_id = self.fixed_frame
             vic.header.stamp = wm.header.stamp
@@ -156,7 +183,8 @@ class WorldModelNode(Node):
 
         self.pub.publish(wm)
         self.get_logger().info(
-            f"world_model: {len(locations)} locations, {len(self.victims)} victims, "
+            f"world_model: {len(locations)} locations, {len(confirmed)} victims "
+            f"({len(self.victims) - len(confirmed)} candidates), "
             f"robot@{self.robot_cell or '?'}",
             throttle_duration_sec=5.0,
         )
