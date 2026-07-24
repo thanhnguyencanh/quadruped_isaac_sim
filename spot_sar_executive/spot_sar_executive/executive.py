@@ -209,8 +209,22 @@ class TaskExecutive(Node):
             # rare). Fall back to sensing toward them rather than idling.
             self._sense_toward(vids, loc_by_id)
             return
-        self.get_logger().warn(f"PLAN ({len(plan)} actions); next: {plan[0]}")
-        self._dispatch(plan[0])
+        first = plan[0]
+        # FD front-loads zero-risk open-door actions: the spawn room can border SEVERAL
+        # doors, so every open is applicable immediately and BOTH doors visibly opened
+        # before the robot moved anywhere. Dispatch the open for the door the plan
+        # actually TRAVERSES next instead; if the next traversal needs no opening,
+        # dispatch that move (only opens precede it, so its preconditions hold now).
+        # Skipped opens resurface in later plans when their traversal comes up.
+        if parse_action(first)[0] == "open-door":
+            first_move = next((a for a in plan if parse_action(a)[0] == "move"), None)
+            if first_move is not None:
+                door_used = parse_action(first_move)[1][-1]  # move(?from ?to ?door)
+                match = next((a for a in plan if parse_action(a)[0] == "open-door"
+                              and parse_action(a)[1][0] == door_used), None)
+                first = match if match is not None else first_move
+        self.get_logger().warn(f"PLAN ({len(plan)} actions); next: {first}")
+        self._dispatch(first)
 
     # ---------------- STATUS (terminal dashboard) ----------------
     def _status(self):

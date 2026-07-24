@@ -144,8 +144,25 @@ class SkillServer(Node):
             time.sleep(0.1)
         return False, f"did not reach {target} within {timeout:.0f}s"
 
+    def _door_pos(self, door_id):
+        """Door slab centre from the scene topology (floor DOORS / building PORTALS)."""
+        try:
+            from spot_sar_planning import sar_building, sar_floor
+        except ImportError:
+            return None
+        for d in getattr(sar_floor, "DOORS", []):
+            if d.id == door_id:
+                return d.pos
+        for prt in getattr(sar_building, "PORTALS", []):
+            if prt.id == door_id:
+                return prt.pos
+        return None
+
     def _open_door(self, door_id, timeout=20.0):
-        """Publish the open command and BLOCK until /door_states confirms the door is open.
+        """WALK to the door, then publish the open command and BLOCK until /door_states
+        confirms. The sim door is remote-actuated, so without the approach leg doors popped
+        open while the robot was still far away ("at room_b" is satisfied anywhere in the
+        room). Approach point: 0.9 m from the slab centre on the ROBOT'S side.
 
         Same busy-poll pattern as _nav_to (safe under ReentrantCallbackGroup): the executor keeps
         servicing /door_states while we wait. Idempotent: re-asserting an already-open door is fine.
@@ -153,6 +170,17 @@ class SkillServer(Node):
         door_id = door_id.strip()
         if door_id in self._opened_doors:
             return True, f"door {door_id} already open"
+        pos = self._door_pos(door_id)
+        rxy = self._robot_xy()
+        if pos is not None and rxy is not None:
+            dx, dy = rxy[0] - pos[0], rxy[1] - pos[1]
+            dist = math.hypot(dx, dy)
+            if dist > 1.5:
+                ax, ay = pos[0] + 0.9 * dx / dist, pos[1] + 0.9 * dy / dist
+                self.get_logger().info(f"walking to door {door_id} @ ({ax:.2f}, {ay:.2f}) before opening")
+                ok, msg = self._nav_to(ax, ay)
+                if not ok:
+                    return False, f"could not reach door {door_id}: {msg}"
         self.door_cmd.publish(String(data=door_id))
         t0 = time.time()
         while rclpy.ok() and time.time() - t0 < timeout:
